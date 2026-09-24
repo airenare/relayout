@@ -1,0 +1,11 @@
+[Unit]
+Description=relayout - local keyboard layout autocorrect daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/relayout/.venv/bin/relayoutd
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
