@@ -21,10 +21,13 @@ class Daemon:
             return
 
         corrected_chars = []
-        for keycode, level, active_layout, _ in chunk:
+        for keycode, level, active_layout, displayed_char in chunk:
             ch = self.layout_pair.other_layout_char(keycode, level, active_layout)
-            if ch:
-                corrected_chars.append(ch)
+            # Keep the count of corrected characters in lockstep with the
+            # number of backspaces sent: a keycode/level with no mapped
+            # counterpart falls back to what was actually on screen rather
+            # than being silently dropped.
+            corrected_chars.append(ch if ch else displayed_char)
 
         inject.send_backspaces(len(chunk))
         inject.type_text("".join(corrected_chars))

@@ -61,8 +61,13 @@ class LayoutPair:
                 ch_b = chars_b[level]
                 if not ch_a or not ch_b or ch_a == ch_b:
                     continue
-                char_map[ch_a] = ch_b
-                char_map[ch_b] = ch_a
+                # First mapping wins: keycodes are iterated in ascending
+                # order, so the main alphanumeric block (lower keycodes)
+                # is resolved before the keypad's duplicate punctuation
+                # keys, and a later keycode can never silently overwrite
+                # an earlier, more canonical mapping.
+                char_map.setdefault(ch_a, ch_b)
+                char_map.setdefault(ch_b, ch_a)
         return char_map
 
     def swap_selection_text(self, text: str) -> str:

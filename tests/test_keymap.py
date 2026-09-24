@@ -33,6 +33,17 @@ def test_layout_pair_swap_selection_text_passthrough_for_shared_chars():
     assert pair.swap_selection_text("123 456") == "123 456"
 
 
+def test_layout_pair_char_map_does_not_let_keypad_overwrite_main_row_punctuation():
+    # Found in final review: keycode 61 (main-row '/','?') and the keypad
+    # decimal key both produce '.' on one side, and the char_map build used
+    # to let whichever keycode was iterated last silently overwrite the
+    # other's mapping. The main-row '.' key (keycode 60, us) must map to
+    # its real Russian counterpart 'ю', not get clobbered by keycode 61.
+    pair = LayoutPair("us", "ru")
+    assert pair.swap_selection_text(".") == "ю"
+    assert pair.swap_selection_text(",") == "б"
+
+
 def test_layout_pair_other_layout_char():
     pair = LayoutPair("us", "ru")
     # xkb keycode 24, level 0, typed while "us" was active -> the "ru" equivalent

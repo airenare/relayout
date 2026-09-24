@@ -48,6 +48,30 @@ def test_correct_clears_buffer_after_use():
     assert buf.trailing_chunk() == []
 
 
+def test_correct_falls_back_to_displayed_char_when_no_counterpart():
+    # Found in final review: other_layout_char can return None for a
+    # keycode/level with no counterpart in the other layout's table (e.g.
+    # a multi-keysym level). Dropping it desynced the backspace count from
+    # the retyped text, deleting one extra character the user didn't type
+    # wrong. The original displayed character must be kept instead.
+    pair = LayoutPair("us", "ru")
+    buf = TypedTextBuffer()
+    buf.record(keycode=24, level=0, active_layout="us", displayed_char="q", timestamp=0.0)
+    # xkb keycode 63 (keypad '*') decodes to the same '*' in both layouts,
+    # via multi-keysym levels in the real table -- other_layout_char
+    # returns None for a level index past what's meaningfully mapped here.
+    buf.record(keycode=999999, level=0, active_layout="us", displayed_char="*", timestamp=0.05)
+    daemon = Daemon(pair, buf)
+
+    with patch("relayout.daemon.selection.read_primary_selection", return_value=""), \
+         patch("relayout.daemon.inject.type_text") as mock_type, \
+         patch("relayout.daemon.inject.send_backspaces") as mock_backspace:
+        daemon.correct()
+
+    mock_backspace.assert_called_once_with(2)
+    mock_type.assert_called_once_with("й*")
+
+
 def test_correct_noops_when_nothing_to_correct():
     pair = LayoutPair("us", "ru")
     buf = TypedTextBuffer()

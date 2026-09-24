@@ -5,8 +5,8 @@ Never written to disk. Cleared on newline/tab/escape or after an idle
 timeout so it never resurrects something typed long ago.
 """
 
-BOUNDARY_CHARS = set(" \t\n.,!?;:()\"'")
-CLEARING_CHARS = {"\n", "\t", "\x1b"}
+BOUNDARY_CHARS = set(" \t\n\r.,!?;:()\"'")
+CLEARING_CHARS = {"\n", "\r", "\t", "\x1b"}
 
 
 class TypedTextBuffer:
@@ -36,9 +36,20 @@ class TypedTextBuffer:
             self.clear()
             return
 
+        if not displayed_char.isprintable():
+            # Any other control character (e.g. a stray keysym we don't
+            # otherwise special-case) is neither text nor a clear signal --
+            # ignore it rather than appending it as if it were typed text.
+            return
+
         self._entries.append((keycode, level, active_layout, displayed_char))
         if len(self._entries) > self.max_len:
             self._entries.pop(0)
+
+    def backspace(self) -> None:
+        """Remove the most recently recorded entry, mirroring a real Backspace."""
+        if self._entries:
+            self._entries.pop()
 
     def clear(self) -> None:
         self._entries.clear()

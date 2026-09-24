@@ -30,6 +30,41 @@ def test_enter_clears_buffer():
     assert buf.trailing_chunk() == []
 
 
+def test_carriage_return_clears_buffer():
+    # The real XKB "us"/"ru" keymaps decode the Return key to "\r", not
+    # "\n" -- found in final review by checking build_layout_table(...)[36].
+    buf = TypedTextBuffer()
+    _type(buf, "hello")
+    buf.record(keycode=0, level=0, active_layout="us", displayed_char="\r", timestamp=1.0)
+    assert buf.trailing_chunk() == []
+
+
+def test_backspace_removes_last_recorded_entry():
+    buf = TypedTextBuffer()
+    _type(buf, "ghbdto")
+    buf.backspace()
+    chunk = buf.trailing_chunk()
+    assert "".join(c for _, _, _, c in chunk) == "ghbdt"
+
+
+def test_backspace_on_empty_buffer_is_noop():
+    buf = TypedTextBuffer()
+    buf.backspace()  # must not raise
+    assert buf.trailing_chunk() == []
+
+
+def test_record_ignores_non_printable_control_characters():
+    # Found in final review: the Backspace key itself decodes to the
+    # control character "\x08" under the real keymap. It must never be
+    # appended as ordinary text (that both miscounts the delete and would
+    # inject a literal backspace byte).
+    buf = TypedTextBuffer()
+    _type(buf, "ab")
+    buf.record(keycode=0, level=0, active_layout="us", displayed_char="\x08", timestamp=1.0)
+    chunk = buf.trailing_chunk()
+    assert "".join(c for _, _, _, c in chunk) == "ab"
+
+
 def test_idle_timeout_clears_buffer():
     buf = TypedTextBuffer(idle_timeout_s=10.0)
     _type(buf, "hello", start=0.0)
