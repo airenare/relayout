@@ -63,3 +63,17 @@ class TypedTextBuffer:
             chunk.append(entry)
         chunk.reverse()
         return chunk
+
+    def last_word(self) -> tuple[list[tuple[int, int, str, str]], int]:
+        """The last whitespace-delimited word and the spaces typed after it.
+
+        Unlike trailing_chunk(), punctuation does not split the word: keys
+        like ``,`` ``.`` ``;`` are letters in other layouts (ru: б ю ж).
+        """
+        end = len(self._entries)
+        while end > 0 and self._entries[end - 1][3] == " ":
+            end -= 1
+        start = end
+        while start > 0 and self._entries[start - 1][3] != " ":
+            start -= 1
+        return list(self._entries[start:end]), len(self._entries) - end

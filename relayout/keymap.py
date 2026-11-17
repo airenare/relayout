@@ -89,3 +89,22 @@ class LayoutPair:
         if not chars or level >= len(chars):
             return None
         return chars[level]
+
+    def other(self, layout: str) -> str:
+        """The layout of the pair that is not ``layout``."""
+        return self.layout_b if layout == self.layout_a else self.layout_a
+
+    def render(self, chunk, layout: str) -> tuple[str, str]:
+        """Render buffer entries as (text in ``layout``, text in the other).
+
+        A key with no counterpart falls back to what was on screen, so the
+        two texts always have the same length as ``chunk``.
+        """
+        cur = "".join(e[3] for e in chunk)
+        other = "".join(
+            self.other_layout_char(e[0], e[1], layout) or e[3] for e in chunk
+        )
+        return cur, other
+
+    def table_for(self, layout: str) -> dict[int, list[str | None]]:
+        return self._table_b if layout == self.layout_b else self._table_a

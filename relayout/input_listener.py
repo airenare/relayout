@@ -6,18 +6,14 @@ verification steps. The layout-JSON parsing itself is pure and tested in
 tests/test_layout_resolver.py; this module only does the I/O around it.
 """
 import asyncio
-import json
 import logging
-import subprocess
 import time
 
 import evdev
 from evdev import ecodes
 
 from relayout.hotkey import HotkeyDetector
-from relayout.buffer import TypedTextBuffer
-from relayout.keymap import LayoutPair, evdev_to_xkb_keycode
-from relayout.layout_resolver import resolve_active_layout
+from relayout.keymap import evdev_to_xkb_keycode
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +34,16 @@ CARET_MOVING_KEYS = {
     "KEY_PAGEDOWN",
 }
 
-# Re-running `hyprctl devices -j` on every keystroke was measured to add a
-# real fork+exec (~5ms, worse if the compositor is busy) to every keypress.
-# The active layout does not change keystroke-to-keystroke, so cache it
-# briefly instead of querying synchronously in the hot path.
-_LAYOUT_CACHE_TTL_S = 0.5
+# Keys held together with these are shortcuts, not text.
+SHORTCUT_MODIFIERS = {
+    "KEY_LEFTCTRL", "KEY_RIGHTCTRL", "KEY_LEFTALT", "KEY_RIGHTALT",
+    "KEY_LEFTMETA", "KEY_RIGHTMETA",
+}
+POINTER_BUTTONS = {"BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE", "BTN_TOUCH"}
+SPACE_KEY = "KEY_SPACE"
+# How long an auto-correction waits for the user to stop pressing keys.
+SETTLE_S = 0.025
+MAX_WAIT_S = 0.4
 
 
 def find_keyboards() -> list[evdev.InputDevice]:
@@ -66,35 +67,6 @@ def find_keyboards() -> list[evdev.InputDevice]:
     return devices
 
 
-def _fetch_hyprctl_devices() -> dict:
-    try:
-        output = subprocess.run(
-            ["hyprctl", "devices", "-j"], capture_output=True, text=True, timeout=1.0
-        )
-        return json.loads(output.stdout)
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
-        logger.warning("could not query hyprctl for active layout: %s", exc)
-        return {}
-
-
-class _CachedLayoutLookup:
-    """Wraps resolve_active_layout() with a short TTL cache."""
-
-    def __init__(self, layout_pair: LayoutPair, ttl_s: float = _LAYOUT_CACHE_TTL_S):
-        self._layout_pair = layout_pair
-        self._ttl_s = ttl_s
-        self._cached_layout: str | None = None
-        self._cached_at: float = 0.0
-
-    def get(self) -> str:
-        now = time.monotonic()
-        if self._cached_layout is None or now - self._cached_at > self._ttl_s:
-            data = _fetch_hyprctl_devices()
-            self._cached_layout = resolve_active_layout(data, self._layout_pair)
-            self._cached_at = now
-        return self._cached_layout
-
-
 def _key_name_for(code: int) -> str | None:
     """Look up an evdev keycode's name, tolerating vendor-specific codes.
 
@@ -110,12 +82,7 @@ def _key_name_for(code: int) -> str | None:
     return name
 
 
-async def run(
-    layout_pair: LayoutPair,
-    hotkey: HotkeyDetector,
-    buffer: TypedTextBuffer,
-    on_trigger,
-) -> None:
+async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
     keyboards = find_keyboards()
     if not keyboards:
         raise RuntimeError(
@@ -123,10 +90,28 @@ async def run(
             "is this user in the 'input' group? (re-login after usermod -aG input)"
         )
 
-    layout_lookup = _CachedLayoutLookup(layout_pair)
-    shift_held: dict[str, bool] = {"KEY_LEFTSHIFT": False, "KEY_RIGHTSHIFT": False}
+    pair = daemon.layout_pair
+    buffer = daemon.buffer
+    held: set[str] = set()
+    # Bumped by every text key press; a pending auto-correction is dropped
+    # if it changes, because the user has already typed past the word.
+    epoch = 0
+
+    async def auto_correct_when_idle(chunk, spaces: int, started: int) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + MAX_WAIT_S
+        while loop.time() < deadline:
+            if epoch != started:
+                return
+            if not (held - SHIFT_KEYS):
+                await asyncio.sleep(SETTLE_S)
+                if epoch == started and not (held - SHIFT_KEYS):
+                    daemon.auto_correct(chunk, spaces)
+                return
+            await asyncio.sleep(0.01)
 
     async def read_device(device: evdev.InputDevice):
+        nonlocal epoch
         try:
             async for event in device.async_read_loop():
                 if event.type != ecodes.EV_KEY:
@@ -140,8 +125,17 @@ async def run(
                 if key_name is None:
                     continue  # unrecognized/vendor-specific code, ignore safely
 
-                if key_name in SHIFT_KEYS:
-                    shift_held[key_name] = event_type in ("down", "repeat")
+                if event_type == "down":
+                    held.add(key_name)
+                elif event_type == "up":
+                    held.discard(key_name)
+
+                if key_name in POINTER_BUTTONS:
+                    if event_type == "down":
+                        buffer.clear()
+                        daemon.key_typed()
+                        epoch += 1
+                    continue
 
                 # Autorepeat only feeds the buffer's "still typing" signal
                 # below, never the hotkey -- otherwise holding the trigger
@@ -149,10 +143,19 @@ async def run(
                 if event_type == "down" and hotkey.feed(
                     key_name, "down", time.monotonic()
                 ):
-                    on_trigger()
+                    daemon.correct()
                     continue
 
                 if event_type not in ("down", "repeat"):
+                    continue
+                if key_name in SHIFT_KEYS or key_name in SHORTCUT_MODIFIERS:
+                    continue  # modifiers alone neither type nor move the caret
+
+                epoch += 1
+                daemon.key_typed()
+
+                if held & SHORTCUT_MODIFIERS:
+                    buffer.clear()  # Ctrl+A, Super+Enter...: not text
                     continue
 
                 if key_name == BACKSPACE_KEY:
@@ -163,14 +166,10 @@ async def run(
                     buffer.clear()
                     continue
 
-                layout = layout_lookup.get()
+                layout = lookup.get()
                 xkb_keycode = evdev_to_xkb_keycode(event.code)
-                level = 1 if any(shift_held.values()) else 0
-                table = (
-                    layout_pair._table_a
-                    if layout == layout_pair.layout_a
-                    else layout_pair._table_b
-                )
+                level = 1 if held & SHIFT_KEYS else 0
+                table = pair.table_for(layout)
                 chars = table.get(xkb_keycode)
                 displayed_char = (
                     chars[level] if chars and level < len(chars) else None
@@ -178,6 +177,13 @@ async def run(
                 buffer.record(
                     xkb_keycode, level, layout, displayed_char, time.monotonic()
                 )
+
+                if key_name == SPACE_KEY and event_type == "down":
+                    chunk, spaces = buffer.last_word()
+                    if chunk:
+                        asyncio.create_task(
+                            auto_correct_when_idle(chunk, spaces, epoch)
+                        )
         except OSError as exc:
             logger.warning("input device %s disconnected: %s", device.path, exc)
 

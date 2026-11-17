@@ -1,6 +1,6 @@
 [project]
 name = "relayout"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local keyboard-layout autocorrect for Wayland/Hyprland"
 requires-python = ">=3.11"
 license = "MIT"
@@ -14,10 +14,14 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 relayoutd = "relayout.cli:main"
+relayout = "relayout.ctl:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+relayout = ["data/*.gz", "data/README.md"]
 
 [tool.setuptools.packages.find]
 include = ["relayout*"]

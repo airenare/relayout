@@ -20,6 +20,10 @@ python3 -m venv "$INSTALL_DIR/.venv"
 
 cp packaging/relayout.service "$SERVICE_DIR/relayout.service"
 
+# `relayout` control command (also used by the Omarchy bar widget)
+mkdir -p "$HOME/.local/bin"
+ln -sf "$INSTALL_DIR/.venv/bin/relayout" "$HOME/.local/bin/relayout"
+
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     cat > "$CONFIG_DIR/config.toml" <<'EOF'
 [layouts]
@@ -33,10 +37,14 @@ window_ms = 400
 [buffer]
 max_len = 500
 idle_timeout_s = 10
+
+[auto]
+enabled = true            # correct the last word when you press Space
 EOF
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable --now relayout
+systemctl --user enable relayout
+systemctl --user restart relayout
 
-echo "relayout installed and started. Edit $CONFIG_DIR/config.toml to customize the hotkey or layout pair, then: systemctl --user restart relayout"
+echo "relayout installed and started (auto-correction is on: type, press Space). Edit $CONFIG_DIR/config.toml to customize the hotkey or layout pair, then: systemctl --user restart relayout"

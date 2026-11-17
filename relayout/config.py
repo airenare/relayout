@@ -6,6 +6,23 @@ DEFAULT_CONFIG = {
     "layouts": {"pair": ["us", "ru"]},
     "hotkey": {"key": "KEY_LEFTSHIFT", "taps": 2, "window_ms": 400},
     "buffer": {"max_len": 500, "idle_timeout_s": 10.0},
+    "auto": {
+        # Correct the last word automatically when you press Space.
+        "enabled": True,
+        # Log-probability lead (nats) the other layout needs to win.
+        "threshold": 4.0,
+        # Manual flips of the same word (or undos of an auto-correction)
+        # before relayout remembers it for good.
+        "learn_threshold": 2,
+        "notify": True,
+        # Window classes, as in `hyprctl activewindow`.
+        "exclude_apps": [
+            "org.keepassxc.KeePassXC", "1Password", "Bitwarden",
+            "gcr-prompter", "pinentry-qt", "pinentry-gtk",
+        ],
+        # Shell popups (layer-shell namespaces), e.g. the polkit prompt.
+        "exclude_layers": ["omarchy-polkit"],
+    },
 }
 
 

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "air.relayout",
+  "name": "Relayout",
+  "version": "1.0.0",
+  "author": "air",
+  "description": "Bar widget for the relayout keyboard-layout auto-correction daemon: toggle auto-correct, exclude the current app, and manage learned words",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Relayout",
+    "description": "Keyboard icon, dimmed while auto-correction is off. Left click opens the panel; right click toggles auto-correction.",
+    "category": "Widgets",
+    "allowMultiple": false
+  }
+}
