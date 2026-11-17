@@ -248,3 +248,18 @@ def test_layout_index():
     assert layout_index(devices, "ru") == 1
     assert layout_index(devices, "de") is None
     assert layout_index({}, "us") is None
+
+
+def test_typed_word_beats_stale_selection(pair, detector, tmp_path):
+    d, buf, fx = make(pair, detector, tmp_path)
+    fx.selected = "stale selection " * 50
+    type_text(buf, pair, "us", "ghbdtn")
+    d.correct()
+    assert fx.calls == [("bs", 6), ("type", "привет"), ("switch", "ru")]
+
+
+def test_selection_used_when_nothing_typed(pair, detector, tmp_path):
+    d, buf, fx = make(pair, detector, tmp_path)
+    fx.selected = "ghbdtn"
+    d.correct()
+    assert fx.calls == [("type", "привет")]

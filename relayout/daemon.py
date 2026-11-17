@@ -175,20 +175,22 @@ class Daemon:
 
     def correct(self) -> None:
         """The hotkey: undo the last correction, else flip selection/last word."""
-        selected = self.selector.read_primary_selection()
-        if selected:
-            self.typist.type_text(self.layout_pair.swap_selection_text(selected))
-            self.last = None
-            return
-
         last = self.last
         if last and self.clock() - last.at <= UNDO_WINDOW_S:
             self._undo(last)
             return
 
+        # Recent typing wins over the selection: Wayland keeps the last mouse
+        # selection indefinitely, so a stale one would otherwise be retyped
+        # (hundreds of words) instead of the word just typed. Clicks and caret
+        # keys clear the buffer, so a real selection still takes the selection path.
         chunk, spaces = self.buffer.last_word()
         if not chunk:
+            selected = self.selector.read_primary_selection()
+            if selected:
+                self.typist.type_text(self.layout_pair.swap_selection_text(selected))
             return
+
         cur = chunk[-1][2]
         cur_text, other_text = self.layout_pair.render(chunk, cur)
         self._retype(chunk, cur, cur_text, other_text, spaces, auto=False)
