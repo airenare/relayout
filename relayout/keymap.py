@@ -11,6 +11,9 @@ from xkbcommon import xkb
 # long-standing convention (X11 reserves keycodes 0-7).
 EVDEV_TO_XKB_OFFSET = 8
 
+# Punctuation that can directly follow a word.
+WORD_END_PUNCT = frozenset(".,!?;:)\"'»")
+
 
 def evdev_to_xkb_keycode(evdev_keycode: int) -> int:
     return evdev_keycode + EVDEV_TO_XKB_OFFSET
@@ -108,3 +111,20 @@ class LayoutPair:
 
     def table_for(self, layout: str) -> dict[int, list[str | None]]:
         return self._table_b if layout == self.layout_b else self._table_a
+
+    def boundary_kind(self, keycode: int, level: int, layout: str) -> str | None:
+        """Does this key end a word without a space ("hello," / "привет?")?
+
+        "strict": punctuation in the current layout, so it cannot be part of a
+        word. "loose": a letter here that is punctuation in the other layout
+        (`.` is `ю` on ru), so it may be mid-word and needs more evidence.
+        """
+        chars = self.table_for(layout).get(keycode)
+        cur = chars[level] if chars and level < len(chars) else None
+        if cur is None:
+            return None
+        if cur in WORD_END_PUNCT:
+            return "strict"
+        if self.other_layout_char(keycode, level, layout) in WORD_END_PUNCT:
+            return "loose"
+        return None

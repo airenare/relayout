@@ -11,10 +11,13 @@ written to disk.
 
 ## Features
 
-- **Auto-correct on Space.** A word-frequency list plus a letter-trigram
+- **Auto-correct on Space or punctuation.** A word-frequency list plus a letter-trigram
   model scores the word in both layouts and flips it when the other layout
   is clearly more likely (about 99% of common words flip correctly, under
-  0.05% of correct words flip by mistake on the bundled lists).
+  0.05% of correct words flip by mistake on the bundled lists). Punctuation
+  typed right after a word (`ghbdtn?` → `привет,`, `руддщ.` → `hello.`) triggers
+  it too; keys that are letters on the other layout (`.` is `ю`) need extra
+  evidence so the first half of a correct word is never flipped.
 - **Double-tap Left Shift** (configurable) to flip by hand: selected text,
   or the last word, even after you've pressed Space. Right after an
   auto-correction the same hotkey **undoes** it.

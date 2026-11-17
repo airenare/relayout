@@ -192,6 +192,7 @@ class Detector:
         other_layout: str,
         other_text: str,
         deliberate_case: bool = False,
+        extra_margin: float = 0.0,
     ) -> bool:
         """True if the keystrokes read better in the other layout.
 
@@ -202,9 +203,16 @@ class Detector:
             return False
         if not (self.supports(cur_layout) and self.supports(other_layout)):
             return False
-        both = cur_text + other_text
-        if any(c.isdigit() or c in NON_PROSE for c in both):
+        if any(c.isdigit() for c in cur_text + other_text):
             return False
+        # Symbols may trail the word ("привет?" is "ghbdtn&" on the other
+        # layout) but not lead it or sit inside it.
+        for layout, text in ((cur_layout, cur_text), (other_layout, other_text)):
+            model = self.models[language_for(layout)]
+            core = model.core(normalize(text, language_for(layout)))
+            head = text[: text.lower().replace("ё", "е").rfind(core) + len(core)] if core else text
+            if any(c in NON_PROSE for c in head):
+                return False
 
         cur_lang, other_lang = language_for(cur_layout), language_for(other_layout)
         cur_norm = normalize(cur_text, cur_lang)
@@ -219,4 +227,4 @@ class Detector:
             return is_word(other_lang, other_norm) and not is_word(cur_lang, cur_norm)
 
         lead = self.score(other_layout, other_text) - self.score(cur_layout, cur_text)
-        return lead > self.params.threshold
+        return lead > self.params.threshold + extra_margin

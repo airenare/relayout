@@ -12,6 +12,7 @@ import time
 import evdev
 from evdev import ecodes
 
+from relayout.daemon import LOOSE_TRIGGER_MARGIN
 from relayout.hotkey import HotkeyDetector
 from relayout.keymap import evdev_to_xkb_keycode
 
@@ -97,7 +98,9 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
     # if it changes, because the user has already typed past the word.
     epoch = 0
 
-    async def auto_correct_when_idle(chunk, spaces: int, started: int) -> None:
+    async def auto_correct_when_idle(
+        chunk, spaces: int, started: int, extra_margin: float = 0.0
+    ) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + MAX_WAIT_S
         while loop.time() < deadline:
@@ -106,7 +109,7 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
             if not (held - SHIFT_KEYS):
                 await asyncio.sleep(SETTLE_S)
                 if epoch == started and not (held - SHIFT_KEYS):
-                    daemon.auto_correct(chunk, spaces)
+                    daemon.auto_correct(chunk, spaces, extra_margin)
                 return
             await asyncio.sleep(0.01)
 
@@ -178,12 +181,21 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
                     xkb_keycode, level, layout, displayed_char, time.monotonic()
                 )
 
-                if key_name == SPACE_KEY and event_type == "down":
+                if event_type != "down":
+                    continue
+                if key_name == SPACE_KEY:
                     chunk, spaces = buffer.last_word()
-                    if chunk:
-                        asyncio.create_task(
-                            auto_correct_when_idle(chunk, spaces, epoch)
-                        )
+                    margin = 0.0
+                else:
+                    kind = pair.boundary_kind(xkb_keycode, level, layout)
+                    if kind is None:
+                        continue
+                    chunk, spaces = buffer.last_word()
+                    margin = LOOSE_TRIGGER_MARGIN if kind == "loose" else 0.0
+                if chunk:
+                    asyncio.create_task(
+                        auto_correct_when_idle(chunk, spaces, epoch, margin)
+                    )
         except OSError as exc:
             logger.warning("input device %s disconnected: %s", device.path, exc)
 

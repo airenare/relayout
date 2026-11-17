@@ -263,3 +263,69 @@ def test_selection_used_when_nothing_typed(pair, detector, tmp_path):
     fx.selected = "ghbdtn"
     d.correct()
     assert fx.calls == [("type", "привет")]
+
+
+# --- word-ending punctuation without a space -------------------------------
+
+def key_of(pair, layout, ch):
+    for keycode, chars in pair.table_for(layout).items():
+        if ch in chars:
+            return keycode, chars.index(ch)
+
+
+def test_boundary_kinds(pair):
+    assert pair.boundary_kind(*key_of(pair, "us", ","), "us") == "strict"
+    assert pair.boundary_kind(*key_of(pair, "us", "?"), "us") == "strict"
+    assert pair.boundary_kind(*key_of(pair, "ru", "б"), "ru") == "loose"   # ,
+    assert pair.boundary_kind(*key_of(pair, "ru", "."), "ru") == "strict"
+    assert pair.boundary_kind(*key_of(pair, "us", "a"), "us") is None
+
+
+def type_keys_on_other(buf, pair, layout, intended):
+    """Press the keys that produce `intended` on `layout`, with the other layout
+    active (what you get typing in the wrong layout). Returns what appears."""
+    other = pair.other(layout)
+    shown = ""
+    for i, ch in enumerate(intended):
+        keycode, level = key_of(pair, layout, ch)
+        shown_ch = pair.table_for(other)[keycode][level]
+        buf.record(keycode, level, other, shown_ch, float(i) * 0.01)
+        shown += shown_ch
+    return shown
+
+
+@pytest.mark.parametrize("intended,layout", [
+    ("привет,", "ru"), ("привет.", "ru"), ("привет?", "ru"), ("привет:", "ru"),
+    ('привет"', "ru"), ("привет!", "ru"), ("привет)", "ru"), ("привет;", "ru"),
+    ("hello,", "us"), ("hello.", "us"), ("hello?", "us"), ("hello!", "us"),
+])
+def test_punctuation_directly_after_word_flips(pair, detector, tmp_path, intended, layout):
+    d, buf, fx = make(pair, detector, tmp_path)
+    shown = type_keys_on_other(buf, pair, layout, intended)
+    chunk, spaces = buf.last_word()
+    assert spaces == 0
+    # letter-keys (loose) need extra margin; use it for all to prove the worst case
+    assert d.auto_correct(chunk, 0, extra_margin=8.0), shown
+    assert fx.calls == [("bs", len(intended)), ("type", intended), ("switch", layout)]
+
+
+def test_correct_word_with_punctuation_is_kept(pair, detector, tmp_path):
+    d, buf, fx = make(pair, detector, tmp_path)
+    for layout, text in (("us", "hello,"), ("ru", "привет?"), ("us", "world.")):
+        buf.clear()
+        type_text(buf, pair, layout, text)
+        chunk, _ = buf.last_word()
+        assert not d.auto_correct(chunk, 0, extra_margin=8.0)
+    assert fx.calls == []
+
+
+def test_lone_punctuation_is_not_a_word(pair, detector, tmp_path):
+    d, buf, fx = make(pair, detector, tmp_path)
+    type_text(buf, pair, "us", ",")
+    chunk, _ = buf.last_word()
+    assert not d.auto_correct(chunk, 0)
+
+
+def test_symbols_inside_a_word_still_block(pair, detector):
+    assert not detector.decide("us", "ghb&dtn", "ru", "при?вет")
+    assert not detector.decide("us", "&ghbdtn", "ru", "?привет")
