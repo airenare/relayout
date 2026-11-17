@@ -13,8 +13,9 @@ from typing import Callable
 
 from relayout import inject, selection
 from relayout.buffer import TypedTextBuffer
-from relayout.detect import Detector, language_for
+from relayout.detect import Detector, deliberate_case, language_for
 from relayout.keymap import LayoutPair
+from relayout.output import LAYOUT_SETTLE_S
 from relayout.rules import Store, rule_key
 
 UNDO_WINDOW_S = 8.0
@@ -33,6 +34,7 @@ class Correction:
     spaces: int
     auto: bool
     at: float
+    chunk: tuple = ()  # buffer entries of the original keys, for key replay
 
 
 def notify_send(message: str) -> None:
@@ -40,21 +42,6 @@ def notify_send(message: str) -> None:
         subprocess.run(["notify-send", "-a", "relayout", "relayout", message], check=False)
     except FileNotFoundError:
         pass
-
-
-def deliberate_case(chunk, cur_text: str, other_text: str) -> bool:
-    """Capitals beyond the first letter mean it was typed on purpose.
-
-    ``iPhone``, ``camelCase`` and ALL CAPS (``USA``, ``ФРГ``) are left alone.
-    Only keys that are letters in both layouts count (Shift on ``;`` is ``:``).
-    """
-    shifted = [
-        e[1] == 1
-        for e, a, b in zip(chunk, cur_text, other_text)
-        if a.isalpha() and b.isalpha()
-    ]
-    n = sum(shifted)
-    return n != 0 and not (n == 1 and shifted[0])
 
 
 class Daemon:
@@ -71,6 +58,9 @@ class Daemon:
         exclude_layers: tuple[str, ...] = (),
         notify: Callable[[str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        replayer=None,
+        locked: Callable[[], bool] = lambda: False,
+        sleep: Callable[[float], None] = time.sleep,
     ):
         self.layout_pair = layout_pair
         self.buffer = buffer
@@ -83,6 +73,9 @@ class Daemon:
         self.exclude_layers = {x.lower() for x in exclude_layers}
         self.notify = notify
         self.clock = clock
+        self.replayer = replayer  # KeyReplayer, or None to type text with wtype
+        self.locked = locked
+        self._sleep = sleep
         self.app = ""
         self.layers: set[str] = set()
         self.last: Correction | None = None
@@ -95,6 +88,8 @@ class Daemon:
     # --- state -------------------------------------------------------
 
     def suppressed(self) -> str | None:
+        if self.locked():
+            return "lock"
         if self.store.is_excluded(self.app):
             return "app"
         if self.layers & self.exclude_layers:
@@ -161,7 +156,7 @@ class Daemon:
             return False
         return self.detector.decide(
             cur, cur_text, other, other_text,
-            deliberate_case(chunk, cur_text, other_text),
+            deliberate_case([e[1] == 1 for e in chunk], cur_text, other_text),
             extra_margin,
         )
 
@@ -183,14 +178,28 @@ class Daemon:
         self._retype(chunk, cur, cur_text, other_text, spaces, auto=True)
         return True
 
+    def _emit(self, entries, old_len: int, text: str, spaces: int, layout: str) -> None:
+        """Replace ``old_len`` characters (+ trailing spaces) with ``text`` and
+        make ``layout`` active, by key replay when available, else wtype."""
+        if self.replayer is not None:
+            self.replayer.backspaces(old_len + spaces)
+            if self.hypr:
+                self.hypr.switch(layout)
+                self._sleep(LAYOUT_SETTLE_S)
+            self.replayer.replay(entries, spaces)
+            return
+        self.typist.send_backspaces(old_len + spaces)
+        self.typist.type_text(text + " " * spaces)
+        if self.hypr:
+            self.hypr.switch(layout)
+
     def _retype(self, chunk, cur, cur_text, other_text, spaces, auto) -> None:
         other = self.layout_pair.other(cur)
-        self.typist.send_backspaces(len(chunk) + spaces)
-        self.typist.type_text(other_text + " " * spaces)
-        if self.hypr:
-            self.hypr.switch(other)
+        self._emit(chunk, len(chunk), other_text, spaces, other)
         self.buffer.clear()
-        self.last = Correction(cur_text, other_text, cur, spaces, auto, self.clock())
+        self.last = Correction(
+            cur_text, other_text, cur, spaces, auto, self.clock(), tuple(chunk)
+        )
 
     def correct(self) -> None:
         """The hotkey: undo the last correction, else flip selection/last word."""
@@ -218,10 +227,7 @@ class Daemon:
         self._learn(other_text, self.layout_pair.other(cur))
 
     def _undo(self, last: Correction) -> None:
-        self.typist.send_backspaces(len(last.new_text) + last.spaces)
-        self.typist.type_text(last.orig_text + " " * last.spaces)
-        if self.hypr:
-            self.hypr.switch(last.orig_layout)
+        self._emit(last.chunk, len(last.new_text), last.orig_text, last.spaces, last.orig_layout)
         self.buffer.clear()
         self.last = None
         if last.auto:

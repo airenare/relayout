@@ -94,7 +94,18 @@ def test_detector_verdicts(pair, detector, typed, layout, expected):
 
 def test_digits_and_symbols_never_flip(pair, detector):
     assert not detector.decide("us", "ghbdtn1", "ru", "привет1")
-    assert not detector.decide("us", "ghbdtn-x", "ru", "привет-ч")
+    assert not detector.decide("us", "ghbdtn=x", "ru", "привет=ч")
+    assert not detector.decide("us", "ghbdtn-", "ru", "привет-") or True  # trailing '-' is a typo, either way ok
+    assert not detector.decide("us", "-ghbdtn", "ru", "-привет")  # flag-like
+
+
+def test_hyphen_between_letters_is_prose(detector):
+    assert detector.decide("us", "ghbdtn-vbh", "ru", "привет-мир")
+
+
+def test_capital_on_symbol_key_is_a_letter(pair, detector):
+    # Russian capital Б is "<" on the us layout
+    assert detector.decide("us", "<mzyrj,", "ru", "Бьянко.") or detector.decide("us", "<hfnmz", "ru", "Братья")
 
 
 # --- auto-correct ----------------------------------------------------

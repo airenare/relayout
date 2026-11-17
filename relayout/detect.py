@@ -38,6 +38,50 @@ SMOOTHING_K = 0.01
 NON_PROSE = set("-=_@#%^&*+~|<>{}\\")
 
 
+def _blocked_by_symbols(cur: str, other: str) -> bool:
+    """Symbols that make this not prose: URLs, emails, flags, passwords...
+
+    ``cur`` and ``other`` are the same keystrokes in each layout, so they line
+    up character by character. A symbol is fine when its key is a letter in
+    the other layout (a Russian capital `Б` is `<` on us), when it trails the
+    word (`привет?` is `ghbdtn&`), or when a hyphen sits between two letters.
+    """
+    letter = [a.isalpha() or b.isalpha() for a, b in zip(cur, other)]
+    end = max((i + 1 for i, v in enumerate(letter) if v), default=0)
+    for i in range(end):
+        a, b = cur[i], other[i]
+        for sym, twin in ((a, b), (b, a)):
+            if sym not in NON_PROSE or twin.isalpha():
+                continue
+            interior_hyphen = (
+                sym == "-" and 0 < i < end - 1 and letter[i - 1] and letter[i + 1]
+            )
+            if not interior_hyphen:
+                return True
+    return False
+
+
+def deliberate_case(shifted: list[bool], cur_text: str, other_text: str) -> bool:
+    """Capitals beyond the first letter mean it was typed on purpose.
+
+    ``iPhone``, ``camelCase`` and ALL CAPS (``USA``, ``ФРГ``) are left alone;
+    a capital that starts a hyphenated part (``Санкт-Георген``) is a name.
+    ``shifted[i]`` says whether key i was typed with Shift. Only keys that are
+    letters in both layouts count (Shift on `;` is `:`).
+    """
+    parts: list[list[bool]] = [[]]
+    for flag, a, b in zip(shifted, cur_text, other_text):
+        if a == "-":
+            parts.append([])
+        elif a.isalpha() and b.isalpha():
+            parts[-1].append(flag)
+    for part in parts:
+        n = sum(part)
+        if n != 0 and not (n == 1 and part[0]):
+            return True
+    return False
+
+
 def language_for(layout: str) -> str:
     return LANG_OF_LAYOUT.get(layout, layout)
 
@@ -111,19 +155,25 @@ class LangModel:
             end -= 1
         return text[start:end]
 
+    def _word_logp(self, word: str, params: Params) -> float:
+        p_word = self.words.get(word, 0.0) / self.total
+        p_letters = math.exp(self.letters_logp(word))
+        mixed = params.lam * p_word + (1.0 - params.lam) * p_letters
+        return math.log(mixed) if mixed > 0.0 else -math.inf
+
     def score(self, text: str, params: Params) -> float:
         core = self.core(text)
         if not core:
             return -math.inf
-        p_word = self.words.get(core, 0.0) / self.total
-        p_letters = math.exp(self.letters_logp(core))
-        mixed = params.lam * p_word + (1.0 - params.lam) * p_letters
-        if mixed <= 0.0:
+        # Hyphenated words are scored part by part ("санкт-георген").
+        parts = [p for p in core.split("-") if p]
+        if not parts:
             return -math.inf
+        total = sum(self._word_logp(p, params) for p in parts)
         # Punctuation around a word ("hello.") is fine, but less likely
         # than a clean word: charge one unseen letter per stripped char.
         stripped = len(text) - len(core)
-        return math.log(mixed) - stripped * self.unseen_penalty
+        return total - stripped * self.unseen_penalty
 
 
 def path_commands() -> frozenset[str]:
@@ -205,14 +255,8 @@ class Detector:
             return False
         if any(c.isdigit() for c in cur_text + other_text):
             return False
-        # Symbols may trail the word ("привет?" is "ghbdtn&" on the other
-        # layout) but not lead it or sit inside it.
-        for layout, text in ((cur_layout, cur_text), (other_layout, other_text)):
-            model = self.models[language_for(layout)]
-            core = model.core(normalize(text, language_for(layout)))
-            head = text[: text.lower().replace("ё", "е").rfind(core) + len(core)] if core else text
-            if any(c in NON_PROSE for c in head):
-                return False
+        if _blocked_by_symbols(cur_text, other_text):
+            return False
 
         cur_lang, other_lang = language_for(cur_layout), language_for(other_layout)
         cur_norm = normalize(cur_text, cur_lang)
@@ -220,11 +264,21 @@ class Detector:
         if cur_lang == "en" and self.models["en"].core(cur_norm) in self.commands:
             return False
 
-        if len(cur_text) == 1:
+        cur_core = self.models[cur_lang].core(cur_norm)
+        other_core = self.models[other_lang].core(other_norm)
+        if len(cur_core) == 1 or len(other_core) == 1:
+            # A single letter: flip only when it is a word in the other layout
+            # and not in this one ("d" -> "в", but "a" stays). An initial
+            # ("R.", "E.") is a capital letter plus a period: never flipped.
+            if len(cur_text) > 1 and cur_text[0].isupper() and cur_text.endswith("."):
+                return False
+            if len(cur_core) != 1 or len(other_core) != 1:
+                return False
+
             def is_word(lang: str, t: str) -> bool:
                 return t in SINGLE_LETTER_WORDS.get(lang, ())
 
-            return is_word(other_lang, other_norm) and not is_word(cur_lang, cur_norm)
+            return is_word(other_lang, other_core) and not is_word(cur_lang, cur_core)
 
         lead = self.score(other_layout, other_text) - self.score(cur_layout, cur_text)
         return lead > self.params.threshold + extra_margin

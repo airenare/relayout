@@ -11,13 +11,15 @@ written to disk.
 
 ## Features
 
-- **Auto-correct on Space or punctuation.** A word-frequency list plus a letter-trigram
-  model scores the word in both layouts and flips it when the other layout
-  is clearly more likely (about 99% of common words flip correctly, under
-  0.05% of correct words flip by mistake on the bundled lists). Punctuation
-  typed right after a word (`ghbdtn?` → `привет,`, `руддщ.` → `hello.`) triggers
-  it too; keys that are letters on the other layout (`.` is `ю`) need extra
-  evidence so the first half of a correct word is never flipped.
+- **Auto-correct on Space or punctuation.** A word-frequency list plus a
+  letter-trigram model scores the word in both layouts and flips it when the
+  other layout is clearly more likely. On random Wikipedia text (words typed
+  once right and once on the wrong layout) it flips about 96% of mistyped
+  words and wrongly flips 0.3-0.4% of correct ones, mostly single letters and
+  rare names; reproduce with `scripts/eval.py`. Punctuation typed right after
+  a word (`ghbdtn?` -> `привет,`, `руддщ.` -> `hello.`) triggers it too; keys
+  that are letters on the other layout (`.` is `ю`) need extra evidence so the
+  first half of a correct word is never flipped.
 - **Double-tap Left Shift** (configurable) to flip by hand: selected text,
   or the last word, even after you've pressed Space. A selection is only
   used right after you made one (mouse drag, double/triple click,
@@ -29,9 +31,11 @@ written to disk.
 - **Careful by design.** It never touches words with digits or symbols,
   `camelCase`/`iPhone`/ALL CAPS, executables in `$PATH` (`jq`, `gcc`), text
   typed with Ctrl/Alt/Super held, or anything after a click or arrow key.
-  Password managers and the polkit prompt are excluded by default, and
+  Password managers, the polkit prompt and the lock screen are excluded by default, and
   because it only acts on Space, passwords are rarely affected.
-- **Works in every app**, text is retyped with `wtype`.
+- **Works in every app.** A correction replays the same physical keys on a
+  virtual keyboard after switching the layout (tested in a terminal and
+  Chromium); if `/dev/uinput` isn't writable it falls back to `wtype`.
 - **Bar widget** for Omarchy: on/off state, per-app exclusion and learned
   words (see [Bar widget](#bar-widget)).
 
@@ -42,8 +46,8 @@ keyboard, so typing is never delayed) and compiles the real XKB keymap of
 each layout in the pair with `libxkbcommon`, so it knows exactly which
 character each physical key produces in either layout. On Space it renders
 the last word in both layouts, scores each, and, if the other one wins by a
-margin, sends Backspace, types the corrected word with `wtype` and switches
-the layout with `hyprctl switchxkblayout`. A correction is dropped if you
+margin, sends Backspace, switches
+the layout with `hyprctl switchxkblayout` and replays the keys. A correction is dropped if you
 type another key before it runs.
 
 Layout pairs need a word list in `relayout/data/<lang>.txt.gz`. `us`/`gb`
@@ -68,6 +72,7 @@ relayout has to see what you type, so:
 - Linux, Wayland, Hyprland (`hyprctl`); Omarchy is only needed for the widget
 - Python 3.11+
 - `wl-clipboard` and `wtype` (installed on Omarchy by default)
+- Write access to `/dev/uinput` for key replay (otherwise `wtype` is used)
 - Membership in the `input` group (the install script sets this up)
 
 ## Install
@@ -123,6 +128,9 @@ window_ms = 400           # max milliseconds between taps
 max_len = 500             # max buffered keystrokes
 idle_timeout_s = 10       # buffer clears after this many seconds idle
 
+[output]
+method = "auto"           # "uinput" (replay keys), "wtype", or auto
+
 [auto]
 enabled = true            # correct on Space (also toggled by the widget)
 threshold = 4.0           # higher = more cautious; 2-6 is the useful range
@@ -156,7 +164,8 @@ python3 -m venv .venv
 ./.venv/bin/pytest
 ```
 
-The evdev glue (`relayout/input_listener.py`) needs real input devices and is
+`scripts/eval.py en|ru FILE` scores the detector on any text file;
+`scripts/build-wordlists.py` rebuilds the word lists. The evdev glue (`relayout/input_listener.py`) needs real input devices and is
 verified end to end by injecting keys through a virtual `uinput` keyboard
 into a terminal running the daemon. Release checklist: tests green,
 `omarchy plugin validate` on a clean checkout.

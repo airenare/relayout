@@ -84,6 +84,42 @@ def hyprctl_json(*args: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def session_locked(monitors: list | None = None) -> bool:
+    """True while the compositor holds a session lock (Omarchy's lock screen).
+
+    Hyprland reports no lock state directly; like Omarchy's own helper, treat
+    LOCK in a monitor's solitaryBlockedBy as locked.
+    """
+    if monitors is None:
+        try:
+            monitors = json.loads(hyprctl("monitors", "-j"))
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(monitors, list):
+        return False
+    return any(
+        isinstance(m, dict) and "LOCK" in (m.get("solitaryBlockedBy") or [])
+        for m in monitors
+    )
+
+
+class CachedLock:
+    """session_locked() behind a short cache: it forks hyprctl."""
+
+    def __init__(self, ttl_s: float = 1.0, probe=session_locked):
+        self._ttl_s = ttl_s
+        self._probe = probe
+        self._value = False
+        self._at = float("-inf")
+
+    def __call__(self) -> bool:
+        now = time.monotonic()
+        if now - self._at > self._ttl_s:
+            self._value = bool(self._probe())
+            self._at = now
+        return self._value
+
+
 def active_window_class() -> str:
     return str(hyprctl_json("activewindow").get("class", ""))
 

@@ -16,6 +16,7 @@ from relayout.daemon import LOOSE_TRIGGER_MARGIN
 from relayout.gestures import PointerGestures
 from relayout.hotkey import HotkeyDetector
 from relayout.keymap import evdev_to_xkb_keycode
+from relayout.output import NAME as VIRTUAL_KEYBOARD_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,9 @@ def find_keyboards() -> list[evdev.InputDevice]:
         except OSError as exc:
             logger.warning("could not open input device %s: %s", path, exc)
             continue
-        if ecodes.EV_KEY in device.capabilities():
+        if device.name == VIRTUAL_KEYBOARD_NAME:
+            device.close()  # our own replay device: never read it back
+        elif ecodes.EV_KEY in device.capabilities():
             devices.append(device)
         else:
             device.close()
@@ -170,6 +173,10 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
 
                 epoch += 1
                 daemon.key_typed()
+
+                if daemon.locked():
+                    buffer.clear()  # lock screen: never keep what is typed there
+                    continue
 
                 # Shift+arrows/Home/End and Ctrl+A leave a selection behind.
                 selects = (key_name in CARET_MOVING_KEYS and held & SHIFT_KEYS) or (

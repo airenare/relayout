@@ -38,6 +38,34 @@ Panel {
 
   property int cursorIndex: -1
 
+  // "Add a word" form state.
+  property string addLayout: ""
+  property string addError: ""
+  readonly property string effectiveAddLayout:
+    layouts.indexOf(addLayout) !== -1 ? addLayout : (layouts.length > 0 ? String(layouts[0]) : "")
+
+  function otherLayout(l) {
+    if (layouts.length !== 2) return ""
+    return String(layouts[0]) === l ? String(layouts[1]) : String(layouts[0])
+  }
+
+  // Returns an error string, or "" when the word is acceptable.
+  function validateWord(w) {
+    if (w === "") return "Enter a word"
+    if (/\s/.test(w)) return "No spaces allowed"
+    return ""
+  }
+
+  function addWord(raw) {
+    var w = String(raw).trim()
+    var err = root.validateWord(w)
+    if (err === "" && root.effectiveAddLayout === "") err = "No layout available"
+    root.addError = err
+    if (err !== "") return false
+    root.run(["rules", "add", w, root.effectiveAddLayout])
+    return true
+  }
+
   function suppressedText() {
     if (suppressed === "app") return "paused: disabled for this app"
     if (suppressed === "layer") return "paused: layer-shell surface focused"
@@ -138,6 +166,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: wordField.activeFocus
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -198,6 +227,82 @@ Panel {
           text: "LEARNED WORDS (" + root.rules.length + ")"
           foreground: root.foreground
           fontFamily: root.fontFamily
+        }
+
+        Item {
+          visible: root.daemonUp
+          width: parent.width
+          height: wordField.implicitHeight
+
+          TextField {
+            id: wordField
+            anchors.left: parent.left
+            anchors.right: layoutChoice.left
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            placeholderText: "Add a word"
+            foreground: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            onTextChanged: root.addError = ""
+            onAccepted: if (root.addWord(text)) text = ""
+            Keys.onEscapePressed: root.close()
+          }
+
+          Row {
+            id: layoutChoice
+            anchors.right: addButton.left
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            Repeater {
+              model: root.layouts
+              delegate: Button {
+                required property var modelData
+                text: String(modelData)
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                horizontalPadding: Style.space(6)
+                selected: root.effectiveAddLayout === String(modelData)
+                onClicked: root.addLayout = String(modelData)
+              }
+            }
+          }
+
+          PanelActionButton {
+            id: addButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "󰐕"
+            tooltipText: "Add word"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: if (root.addWord(wordField.text)) wordField.text = ""
+          }
+        }
+
+        Text {
+          visible: root.daemonUp && root.addError !== ""
+          width: parent.width
+          wrapMode: Text.Wrap
+          textFormat: Text.PlainText
+          text: root.addError
+          color: root.bar ? root.bar.urgent : Color.urgent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Text {
+          visible: root.daemonUp && root.addError === ""
+          width: parent.width
+          wrapMode: Text.Wrap
+          textFormat: Text.PlainText
+          text: "Word comes out in the chosen layout."
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
         }
 
         Text {
@@ -263,7 +368,7 @@ Panel {
 
             Text {
               id: tag
-              anchors.right: removeWord.left
+              anchors.right: moveWord.visible ? moveWord.left : removeWord.left
               anchors.rightMargin: Style.space(6)
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
@@ -271,6 +376,21 @@ Panel {
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
+            }
+
+            PanelActionButton {
+              id: moveWord
+              visible: root.otherLayout(row.modelData.layout) !== ""
+              anchors.right: removeWord.left
+              anchors.rightMargin: Style.space(2)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰓡"
+              tooltipText: "Move to " + root.otherLayout(row.modelData.layout)
+              foreground: root.dim
+              fontFamily: root.fontFamily
+              opacity: row.hasCursor ? 1 : 0.5
+              onHovered: function(on) { row.hotButtons += on ? 1 : -1 }
+              onClicked: root.run(["rules", "add", row.modelData.word, root.otherLayout(row.modelData.layout)])
             }
 
             PanelActionButton {

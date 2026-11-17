@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "air.relayout",
   "name": "Relayout",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "air",
   "description": "Bar widget for the relayout keyboard-layout auto-correction daemon: toggle auto-correct, exclude the current app, and manage learned words",
   "kinds": [

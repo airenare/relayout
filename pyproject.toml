@@ -1,6 +1,6 @@
 [project]
 name = "relayout"
-version = "1.0.0"
+version = "1.1.0"
 description = "Local keyboard-layout autocorrect for Wayland/Hyprland"
 requires-python = ">=3.11"
 license = "MIT"

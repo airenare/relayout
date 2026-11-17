@@ -6,6 +6,12 @@ DEFAULT_CONFIG = {
     "layouts": {"pair": ["us", "ru"]},
     "hotkey": {"key": "KEY_LEFTSHIFT", "taps": 2, "window_ms": 400},
     "buffer": {"max_len": 500, "idle_timeout_s": 10.0},
+    "output": {
+        # How a correction is retyped: "uinput" replays the same physical keys
+        # on a virtual keyboard (works in any app), "wtype" injects text via
+        # the Wayland virtual-keyboard protocol, "auto" = uinput if available.
+        "method": "auto",
+    },
     "auto": {
         # Correct the last word automatically when you press Space.
         "enabled": True,

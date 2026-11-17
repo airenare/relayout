@@ -8,7 +8,8 @@ from relayout.config import load_config
 from relayout.daemon import Daemon, notify_send
 from relayout.detect import Detector, Params
 from relayout.hotkey import HotkeyDetector
-from relayout.hypr import HyprLayout
+from relayout.hypr import CachedLock, HyprLayout
+from relayout.output import KeyReplayer
 from relayout.keymap import LayoutPair
 from relayout.rules import Store
 
@@ -41,6 +42,11 @@ def main() -> None:
         max_len=config["buffer"]["max_len"],
         idle_timeout_s=config["buffer"]["idle_timeout_s"],
     )
+    method = config["output"]["method"]
+    replayer = KeyReplayer.open() if method in ("auto", "uinput") else None
+    if method == "uinput" and replayer is None:
+        logger.warning("output.method = uinput but /dev/uinput is not writable; using wtype")
+    logger.info("retyping with %s", "uinput key replay" if replayer else "wtype")
     lookup = HyprLayout(pair)
     store = Store(default_excluded=auto["exclude_apps"], default_auto=bool(auto["enabled"]))
     daemon = Daemon(
@@ -52,6 +58,8 @@ def main() -> None:
         learn_threshold=int(auto["learn_threshold"]),
         exclude_layers=tuple(auto["exclude_layers"]),
         notify=notify_send if auto["notify"] else None,
+        replayer=replayer,
+        locked=CachedLock(),
     )
     asyncio.run(app.run(daemon, lookup, hotkey))
 

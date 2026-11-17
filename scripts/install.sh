@@ -43,6 +43,11 @@ enabled = true            # correct the last word when you press Space
 EOF
 fi
 
+if [ ! -w /dev/uinput ]; then
+    echo "note: /dev/uinput is not writable by you; relayout will retype with wtype instead."
+    echo "      For key replay: add a udev rule 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' and run 'sudo modprobe uinput'."
+fi
+
 systemctl --user daemon-reload
 systemctl --user enable relayout
 systemctl --user restart relayout
