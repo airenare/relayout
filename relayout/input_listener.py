@@ -13,6 +13,7 @@ import evdev
 from evdev import ecodes
 
 from relayout.daemon import LOOSE_TRIGGER_MARGIN
+from relayout.gestures import PointerGestures
 from relayout.hotkey import HotkeyDetector
 from relayout.keymap import evdev_to_xkb_keycode
 
@@ -42,6 +43,8 @@ SHORTCUT_MODIFIERS = {
 }
 POINTER_BUTTONS = {"BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE", "BTN_TOUCH"}
 SPACE_KEY = "KEY_SPACE"
+CTRL_KEYS = {"KEY_LEFTCTRL", "KEY_RIGHTCTRL"}
+
 # How long an auto-correction waits for the user to stop pressing keys.
 SETTLE_S = 0.025
 MAX_WAIT_S = 0.4
@@ -97,6 +100,7 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
     # Bumped by every text key press; a pending auto-correction is dropped
     # if it changes, because the user has already typed past the word.
     epoch = 0
+    pointer = PointerGestures()
 
     async def auto_correct_when_idle(
         chunk, spaces: int, started: int, extra_margin: float = 0.0
@@ -117,6 +121,10 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
         nonlocal epoch
         try:
             async for event in device.async_read_loop():
+                if event.type in (ecodes.EV_REL, ecodes.EV_ABS):
+                    if "BTN_LEFT" in held:
+                        pointer.moved(abs(event.value) if event.type == ecodes.EV_REL else 1)
+                    continue
                 if event.type != ecodes.EV_KEY:
                     continue
                 # value: 0 = up, 1 = down, 2 = autorepeat (held key)
@@ -134,10 +142,16 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
                     held.discard(key_name)
 
                 if key_name in POINTER_BUTTONS:
+                    now = time.monotonic()
                     if event_type == "down":
                         buffer.clear()
                         daemon.key_typed()
                         epoch += 1
+                        if key_name == "BTN_LEFT":
+                            pointer.down(now)
+                    elif event_type == "up" and key_name == "BTN_LEFT":
+                        if pointer.up():  # a drag, or a double/triple click
+                            daemon.arm_selection()
                     continue
 
                 # Autorepeat only feeds the buffer's "still typing" signal
@@ -157,8 +171,15 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
                 epoch += 1
                 daemon.key_typed()
 
+                # Shift+arrows/Home/End and Ctrl+A leave a selection behind.
+                selects = (key_name in CARET_MOVING_KEYS and held & SHIFT_KEYS) or (
+                    key_name == "KEY_A" and held & CTRL_KEYS
+                )
+
                 if held & SHORTCUT_MODIFIERS:
                     buffer.clear()  # Ctrl+A, Super+Enter...: not text
+                    if selects:
+                        daemon.arm_selection()
                     continue
 
                 if key_name == BACKSPACE_KEY:
@@ -167,6 +188,8 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
 
                 if key_name in CARET_MOVING_KEYS:
                     buffer.clear()
+                    if selects:
+                        daemon.arm_selection()
                     continue
 
                 layout = lookup.get()

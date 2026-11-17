@@ -19,7 +19,9 @@ written to disk.
   it too; keys that are letters on the other layout (`.` is `ю`) need extra
   evidence so the first half of a correct word is never flipped.
 - **Double-tap Left Shift** (configurable) to flip by hand: selected text,
-  or the last word, even after you've pressed Space. Right after an
+  or the last word, even after you've pressed Space. A selection is only
+  used right after you made one (mouse drag, double/triple click,
+  Shift+arrows, Ctrl+A), never an old one the compositor still remembers. Right after an
   auto-correction the same hotkey **undoes** it.
 - **Learns your words.** Flip the same word by hand twice, or undo the same
   auto-correction twice, and relayout remembers: `next` typed on the

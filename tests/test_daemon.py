@@ -8,6 +8,7 @@ def test_correct_prefers_selection_when_present():
     pair = LayoutPair("us", "ru")
     buf = TypedTextBuffer()
     daemon = Daemon(pair, buf)
+    daemon.arm_selection()
 
     with patch("relayout.daemon.selection.read_primary_selection", return_value="ghbdtn"), \
          patch("relayout.daemon.inject.type_text") as mock_type, \

@@ -261,8 +261,36 @@ def test_typed_word_beats_stale_selection(pair, detector, tmp_path):
 def test_selection_used_when_nothing_typed(pair, detector, tmp_path):
     d, buf, fx = make(pair, detector, tmp_path)
     fx.selected = "ghbdtn"
+    d.arm_selection()
     d.correct()
     assert fx.calls == [("type", "привет")]
+    assert not d.selection_armed
+
+
+def test_stale_selection_ignored_when_not_armed(pair, detector, tmp_path):
+    d, buf, fx = make(pair, detector, tmp_path)
+    fx.selected = "old mouse selection " * 50
+    d.correct()
+    assert fx.calls == []
+
+
+def test_typing_or_clicking_disarms_selection(pair, detector, tmp_path):
+    d, buf, fx = make(pair, detector, tmp_path)
+    fx.selected = "ghbdtn"
+    d.arm_selection()
+    d.key_typed()
+    d.correct()
+    assert fx.calls == []
+
+
+def test_selection_swap_maps_through_physical_keys(pair):
+    assert pair.swap_selection_text("ghbdtn?") == "привет,"
+    assert pair.swap_selection_text("привет,") == "ghbdtn?"
+    assert pair.swap_selection_text("руддщб") == "hello,"
+    assert pair.swap_selection_text("ghbdtn. vbh!") == "приветю мир!"
+    assert pair.swap_selection_text("Ghbdtn? Vbh!") == "Привет, Мир!"
+    assert pair.swap_selection_text("привет 123") == "ghbdtn 123"
+    assert pair.swap_selection_text("hello\nworld") == "руддщ\nцщкдв"
 
 
 # --- word-ending punctuation without a space -------------------------------

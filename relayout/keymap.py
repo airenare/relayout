@@ -73,13 +73,43 @@ class LayoutPair:
                 char_map.setdefault(ch_b, ch_a)
         return char_map
 
-    def swap_selection_text(self, text: str) -> str:
-        """Swap every character to its counterpart in the other layout.
+    def _key_index(self, table: dict[int, list[str | None]]) -> dict[str, tuple[int, int]]:
+        """char -> (keycode, level); lowest keycode/level wins, so the main
+        alphanumeric block beats the keypad's duplicate punctuation keys."""
+        index: dict[str, tuple[int, int]] = {}
+        for keycode in sorted(table):
+            for level, ch in enumerate(table[keycode]):
+                if ch:
+                    index.setdefault(ch, (keycode, level))
+        return index
 
-        Characters with no counterpart (digits, space, punctuation shared
-        by both layouts, emoji, etc.) pass through unchanged.
+    def swap_selection_text(self, text: str) -> str:
+        """Retype ``text`` as the same physical keys on the other layout.
+
+        First work out which layout the text was typed in (the one that owns
+        its letters), then map each character through its physical key. This
+        keeps punctuation right where a char-to-char map cannot: `,` is on
+        different keys in us and ru, so `привет,` comes from `ghbdtn?`.
+        Characters on no key (digits shared by both, emoji...) pass through.
         """
-        return "".join(self._char_map.get(ch, ch) for ch in text)
+        index_a = self._key_index(self._table_a)
+        index_b = self._key_index(self._table_b)
+        only_a = sum(1 for c in text if c in index_a and c not in index_b)
+        only_b = sum(1 for c in text if c in index_b and c not in index_a)
+        # Ties (digits, bare punctuation) are assumed to come from layout_a.
+        source = self.layout_b if only_b > only_a else self.layout_a
+        src_index, dst_table = (
+            (index_a, self._table_b) if source == self.layout_a else (index_b, self._table_a)
+        )
+        out = []
+        for ch in text:
+            key = src_index.get(ch)
+            dst = None
+            if key:
+                chars = dst_table.get(key[0])
+                dst = chars[key[1]] if chars and key[1] < len(chars) else None
+            out.append(dst or ch)
+        return "".join(out)
 
     def other_layout_char(
         self, keycode: int, level: int, current_layout: str

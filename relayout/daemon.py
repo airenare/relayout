@@ -86,6 +86,9 @@ class Daemon:
         self.app = ""
         self.layers: set[str] = set()
         self.last: Correction | None = None
+        # True only right after a selection gesture (drag, double click,
+        # Shift+arrows, Ctrl+A). Wayland keeps stale selections forever.
+        self.selection_armed = False
         self.on_change: Callable[[], None] = lambda: None
         self._counts: dict[tuple[str, str], int] = {}
 
@@ -115,8 +118,15 @@ class Daemon:
             self.on_change()
 
     def key_typed(self) -> None:
-        """Any real key press invalidates a pending undo."""
+        """Any real key press invalidates a pending undo and a selection gesture."""
         self.last = None
+        self.selection_armed = False
+
+    def arm_selection(self) -> None:
+        self.selection_armed = True
+
+    def disarm_selection(self) -> None:
+        self.selection_armed = False
 
     def status(self) -> dict:
         active = self.hypr.get() if self.hypr else self.layout_pair.layout_a
@@ -195,9 +205,11 @@ class Daemon:
         # keys clear the buffer, so a real selection still takes the selection path.
         chunk, spaces = self.buffer.last_word()
         if not chunk:
-            selected = self.selector.read_primary_selection()
-            if selected:
-                self.typist.type_text(self.layout_pair.swap_selection_text(selected))
+            if self.selection_armed:
+                selected = self.selector.read_primary_selection()
+                self.selection_armed = False
+                if selected:
+                    self.typist.type_text(self.layout_pair.swap_selection_text(selected))
             return
 
         cur = chunk[-1][2]
