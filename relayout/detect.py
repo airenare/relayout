@@ -30,6 +30,10 @@ SINGLE_LETTER_WORDS = {
     "ru": {"а", "в", "и", "к", "о", "с", "у", "я"},
 }
 
+# A word counts as "real" in a language when its list has at least this many
+# occurrences, which keeps out typos and one-off noise.
+MIN_REAL_COUNT = 100.0
+
 BEGIN, END = "^", "$"
 SMOOTHING_K = 0.01
 # Characters that mean "this is not prose" (URLs, emails, paths, flags,
@@ -234,6 +238,23 @@ class Detector:
     def score(self, layout: str, text: str) -> float:
         lang = language_for(layout)
         return self.models[lang].score(normalize(text, lang), self.params)
+
+    def is_word(self, layout: str, text: str) -> bool:
+        """A plain word (letters only, 2+) that is really in this language's list."""
+        lang = language_for(layout)
+        model = self.models.get(lang)
+        if model is None:
+            return False
+        core = model.core(normalize(text, lang))
+        return (
+            len(core) >= 2
+            and core.isalpha()
+            and model.words.get(core, 0.0) >= MIN_REAL_COUNT
+        )
+
+    def ambiguous(self, cur_layout: str, cur_text: str, other_layout: str, other_text: str) -> bool:
+        """The same keystrokes are a real word in both layouts (``of`` / ``ща``)."""
+        return self.is_word(cur_layout, cur_text) and self.is_word(other_layout, other_text)
 
     def decide(
         self,

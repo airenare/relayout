@@ -28,6 +28,9 @@ class Store:
     def __init__(self, path: Path | None = None, default_excluded=(), default_auto=True):
         self.path = path or default_path()
         self.words: dict[str, str] = {}
+        # Words (both renderings) that are real in both layouts and must never
+        # be auto-flipped in either direction.
+        self.keep: list[str] = []
         self.excluded: list[str] = list(default_excluded)
         self.auto: bool = default_auto
         self._load()
@@ -42,6 +45,9 @@ class Store:
         words = data.get("words")
         if isinstance(words, dict):
             self.words = {str(k): str(v) for k, v in words.items()}
+        keep = data.get("keep")
+        if isinstance(keep, list):
+            self.keep = [str(x) for x in keep]
         excluded = data.get("excluded")
         if isinstance(excluded, list):
             self.excluded = [str(x) for x in excluded]
@@ -51,6 +57,8 @@ class Store:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"auto": self.auto, "excluded": self.excluded, "words": self.words}
+        if self.keep:
+            payload["keep"] = sorted(set(self.keep))
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".state-")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -73,7 +81,24 @@ class Store:
             self.save()
 
     def remove_word(self, word: str) -> bool:
-        removed = self.words.pop(rule_key(word), None) is not None
+        key = rule_key(word)
+        removed = self.words.pop(key, None) is not None
+        if key in self.keep:
+            self.keep.remove(key)
+            removed = True
         if removed:
             self.save()
         return removed
+
+    def is_kept(self, word: str) -> bool:
+        return rule_key(word) in self.keep
+
+    def add_keep(self, *words: str) -> None:
+        """Never auto-flip these words; replaces any directional rule for them."""
+        for word in words:
+            key = rule_key(word)
+            if key:
+                self.words.pop(key, None)
+                if key not in self.keep:
+                    self.keep.append(key)
+        self.save()

@@ -15,6 +15,9 @@ class TypedTextBuffer:
         self.idle_timeout_s = idle_timeout_s
         self._entries: list[tuple[int, int, str, str]] = []
         self._last_time: float | None = None
+        # Layout of the last word before the buffer was emptied by a
+        # correction; lets the next word still see what language you are in.
+        self.context_layout: str | None = None
 
     def record(
         self,
@@ -53,6 +56,19 @@ class TypedTextBuffer:
 
     def clear(self) -> None:
         self._entries.clear()
+        self.context_layout = None
+
+    def previous_word_layout(self) -> str | None:
+        """Layout the word before the last word was typed in (same line)."""
+        entries = self._entries
+        end = len(entries)
+        while end > 0 and entries[end - 1][3] == " ":
+            end -= 1
+        while end > 0 and entries[end - 1][3] != " ":
+            end -= 1
+        while end > 0 and entries[end - 1][3] == " ":
+            end -= 1
+        return entries[end - 1][2] if end > 0 else self.context_layout
 
     def trailing_chunk(self) -> list[tuple[int, int, str, str]]:
         chunk: list[tuple[int, int, str, str]] = []

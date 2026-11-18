@@ -27,6 +27,15 @@ written to disk.
   used right after you made one (mouse drag, double/triple click,
   Shift+arrows, Ctrl+A), never an old one the compositor still remembers.
   After a correction the same hotkey **toggles** the word back and forth until you type, click or switch windows (60 s at most).
+- **Words that exist in both layouts follow the sentence.** `of` and `ща` are
+  both real words, so in `Окей, ща посмотрю` or `House of cards` they stay as
+  typed, even if you once taught relayout a rule for them. A word counts only
+  when it is in both word lists with a real frequency (nonsense such as `щл`
+  or `ghbdtn` is not), and it is only kept when typed in the layout of the
+  word before it. On its own, or after a word in the other layout, the usual
+  rules apply. If you teach two contradicting rules for such a pair, relayout
+  stops guessing and never flips either (`relayout rules keep WORD` does the
+  same by hand).
 - **Learns your words.** Flip the same word by hand twice, or undo the same
   auto-correction twice, and relayout remembers: `next` typed on the
   Russian layout (`туче`, a real Russian word) now always flips.
@@ -132,7 +141,7 @@ relayout status                      # JSON state
 relayout auto on|off|toggle
 relayout exclude add|rm CLASS        # window class, see `hyprctl activewindow`
 relayout exclude list
-relayout rules list | add WORD [LAYOUT] | rm WORD
+relayout rules list | add WORD [LAYOUT] | keep WORD | rm WORD
 relayout flip                        # same as the hotkey
 relayout subscribe                   # stream JSON state on every change
 ```

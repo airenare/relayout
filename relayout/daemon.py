@@ -136,6 +136,7 @@ class Daemon:
             "layouts": [self.layout_pair.layout_a, self.layout_pair.layout_b],
             "active": active,
             "rules": dict(self.store.words),
+            "keep": list(self.store.keep),
         }
 
     # --- corrections -------------------------------------------------
@@ -152,6 +153,16 @@ class Daemon:
         self, chunk, cur: str, cur_text: str, other_text: str, extra_margin: float = 0.0
     ) -> bool:
         other = self.layout_pair.other(cur)
+        if self.store.is_kept(cur_text) or self.store.is_kept(other_text):
+            return False  # real in both layouts and you said: leave it alone
+        if self.detector is not None and self.detector.ambiguous(
+            cur, cur_text, other, other_text
+        ):
+            # A real word in both layouts: it follows the word before it. Typed
+            # in the layout you are already writing in, it stays (`Окей, ща`,
+            # `House of cards`), whatever a learned rule says.
+            if self.buffer.previous_word_layout() == cur:
+                return False
         verdict = self._rule_verdict(cur, cur_text, other, other_text)
         if verdict is not None:
             return verdict
@@ -200,6 +211,7 @@ class Daemon:
         other = self.layout_pair.other(cur)
         self._emit(chunk, len(chunk), other_text, spaces, other)
         self.buffer.clear()
+        self.buffer.context_layout = other
         self.last = Correction(
             cur_text, other_text, cur, spaces, auto, self.clock(), tuple(chunk)
         )
@@ -228,7 +240,7 @@ class Daemon:
         cur = chunk[-1][2]
         cur_text, other_text = self.layout_pair.render(chunk, cur)
         self._retype(chunk, cur, cur_text, other_text, spaces, auto=False)
-        self._learn(other_text, self.layout_pair.other(cur))
+        self._learn(other_text, self.layout_pair.other(cur), cur_text)
 
     def _toggle(self, last: Correction) -> None:
         """Swap the corrected word and the original again, as often as asked."""
@@ -236,7 +248,7 @@ class Daemon:
             self._emit(last.chunk, len(last.new_text), last.orig_text, last.spaces, last.orig_layout)
             last.flipped = False
             if last.auto:
-                self._learn(last.orig_text, last.orig_layout)
+                self._learn(last.orig_text, last.orig_layout, last.new_text)
         else:  # corrected again
             self._emit(
                 last.chunk, len(last.orig_text), last.new_text, last.spaces,
@@ -245,20 +257,39 @@ class Daemon:
             last.flipped = True
         last.at = self.clock()
         self.buffer.clear()
+        self.buffer.context_layout = (
+            self.layout_pair.other(last.orig_layout) if last.flipped else last.orig_layout
+        )
 
-    def _learn(self, text: str, layout: str) -> None:
+    def _learn(self, text: str, layout: str, opposing_text: str = "") -> None:
         key = rule_key(text)
-        if not key or len(key) < 2:
+        if not key or len(key) < 2 or self.store.is_kept(key):
             return
         n = self._counts.get((key, layout), 0) + 1
         if n >= self.learn_threshold:
             self._counts.pop((key, layout), None)
-            self.store.add_word(key, layout)
-            if self.notify:
-                self.notify(f"learned: “{key}” is always {layout}")
+            twin = rule_key(opposing_text)
+            other = self.layout_pair.other(layout)
+            if twin and self.store.words.get(twin) == other and self._both_real(
+                layout, text, other, opposing_text
+            ):
+                # Contradicting rules for two real words (`ща` stays Russian,
+                # `of` stays English): stop guessing, never flip either.
+                self.store.add_keep(key, twin)
+                if self.notify:
+                    self.notify(f"learned: “{key}” / “{twin}” are never flipped")
+            else:
+                self.store.add_word(key, layout)
+                if self.notify:
+                    self.notify(f"learned: “{key}” is always {layout}")
             self.on_change()
         else:
             self._counts[(key, layout)] = n
+
+    def _both_real(self, layout, text, other, other_text) -> bool:
+        return bool(
+            self.detector and self.detector.ambiguous(layout, text, other, other_text)
+        )
 
     # --- control commands (used by the socket server) ----------------
 
@@ -320,8 +351,18 @@ class Daemon:
                 if layout not in (self.layout_pair.layout_a, self.layout_pair.layout_b):
                     return f"error: unknown layout {layout}"
                 store.add_word(word, layout)
+            elif sub == "keep":
+                # Never auto-flip this word or its twin in the other layout.
+                word = args[1]
+                twin = self.layout_pair.swap_selection_text(word)
+                store.add_keep(word, twin)
             elif sub == "rm":
-                if not store.remove_word(args[1]):
+                word = args[1]
+                was_kept = store.is_kept(word)
+                removed = store.remove_word(word)
+                if was_kept:  # a keep rule covers both renderings
+                    store.remove_word(self.layout_pair.swap_selection_text(word))
+                if not removed:
                     return "error: no such rule"
             else:
                 raise ValueError
