@@ -26,7 +26,7 @@ written to disk.
   or the last word, even after you've pressed Space. A selection is only
   used right after you made one (mouse drag, double/triple click,
   Shift+arrows, Ctrl+A), never an old one the compositor still remembers.
-  Within 8 seconds of an auto-correction the same hotkey **undoes** it.
+  After a correction the same hotkey **toggles** the word back and forth until you type, click or switch windows (60 s at most).
 - **Learns your words.** Flip the same word by hand twice, or undo the same
   auto-correction twice, and relayout remembers: `next` typed on the
   Russian layout (`туче`, a real Russian word) now always flips.

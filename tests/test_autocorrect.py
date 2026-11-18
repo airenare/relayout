@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from relayout.buffer import TypedTextBuffer
-from relayout.daemon import Daemon
+from relayout.daemon import UNDO_WINDOW_S, Daemon
 from relayout.detect import Detector
 from relayout.hypr import layout_index
 from relayout.keymap import LayoutPair
@@ -199,10 +199,25 @@ def test_undo_expires(pair, detector, tmp_path):
     d, buf, fx = make(pair, detector, tmp_path, clock=lambda: t[0])
     chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
     d.auto_correct(chunk, spaces)
-    t[0] = 100.0
+    t[0] = UNDO_WINDOW_S + 1
     fx.calls.clear()
     d.correct()  # buffer was cleared by the correction: nothing to do
     assert fx.calls == []
+
+
+def test_hotkey_toggles_back_and_forth_after_a_pause(pair, detector, tmp_path):
+    """Flip, wait, flip back, flip again: each press must do something."""
+    t = [0.0]
+    d, buf, fx = make(pair, detector, tmp_path, clock=lambda: t[0])
+    type_text(buf, pair, "us", "Jrtq")
+    d.correct()                       # manual flip -> "Окей"
+    assert fx.calls[-1] == ("switch", "ru")
+    for expect in ("us", "ru", "us"):
+        t[0] += 20.0                  # longer than the old 8 s undo window
+        n = len(fx.calls)
+        d.correct()
+        assert fx.calls[n:][-1] == ("switch", expect)
+        assert fx.calls[n:][0] == ("bs", 4)   # exactly the word, never the space
 
 
 def test_key_typed_cancels_undo(pair, detector, tmp_path):

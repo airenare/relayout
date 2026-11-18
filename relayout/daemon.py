@@ -18,7 +18,9 @@ from relayout.keymap import LayoutPair
 from relayout.output import LAYOUT_SETTLE_S
 from relayout.rules import Store, rule_key
 
-UNDO_WINDOW_S = 8.0
+# How long the hotkey keeps toggling the last corrected word. Any other key,
+# click or window change ends it sooner.
+UNDO_WINDOW_S = 60.0
 # Extra log-probability margin when a letter-in-this-layout key (ru `ю` for `.`)
 # triggers a correction: measured 0 false flips on 3.6k correct mid-word prefixes.
 LOOSE_TRIGGER_MARGIN = 8.0
@@ -35,6 +37,7 @@ class Correction:
     auto: bool
     at: float
     chunk: tuple = ()  # buffer entries of the original keys, for key replay
+    flipped: bool = True  # False once the hotkey has put the original text back
 
 
 def notify_send(message: str) -> None:
@@ -202,10 +205,11 @@ class Daemon:
         )
 
     def correct(self) -> None:
-        """The hotkey: undo the last correction, else flip selection/last word."""
+        """The hotkey: toggle the last corrected word back and forth, else flip
+        the selection or the last word."""
         last = self.last
         if last and self.clock() - last.at <= UNDO_WINDOW_S:
-            self._undo(last)
+            self._toggle(last)
             return
 
         # Recent typing wins over the selection: Wayland keeps the last mouse
@@ -226,12 +230,21 @@ class Daemon:
         self._retype(chunk, cur, cur_text, other_text, spaces, auto=False)
         self._learn(other_text, self.layout_pair.other(cur))
 
-    def _undo(self, last: Correction) -> None:
-        self._emit(last.chunk, len(last.new_text), last.orig_text, last.spaces, last.orig_layout)
+    def _toggle(self, last: Correction) -> None:
+        """Swap the corrected word and the original again, as often as asked."""
+        if last.flipped:  # back to what was typed
+            self._emit(last.chunk, len(last.new_text), last.orig_text, last.spaces, last.orig_layout)
+            last.flipped = False
+            if last.auto:
+                self._learn(last.orig_text, last.orig_layout)
+        else:  # corrected again
+            self._emit(
+                last.chunk, len(last.orig_text), last.new_text, last.spaces,
+                self.layout_pair.other(last.orig_layout),
+            )
+            last.flipped = True
+        last.at = self.clock()
         self.buffer.clear()
-        self.last = None
-        if last.auto:
-            self._learn(last.orig_text, last.orig_layout)
 
     def _learn(self, text: str, layout: str) -> None:
         key = rule_key(text)
