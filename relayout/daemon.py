@@ -16,6 +16,7 @@ from relayout.buffer import TypedTextBuffer
 from relayout.detect import Detector, deliberate_case, language_for
 from relayout.keymap import LayoutPair
 from relayout.output import LAYOUT_SETTLE_S
+from relayout.hypr import normalize_address as hypr_normalize
 from relayout.rules import Store, rule_key
 
 # How long the hotkey keeps toggling the last corrected word. Any other key,
@@ -38,6 +39,11 @@ class Correction:
     at: float
     chunk: tuple = ()  # buffer entries of the original keys, for key replay
     flipped: bool = True  # False once the hotkey has put the original text back
+
+
+# Notifications never contain typed text: they can be read by other programs.
+NOTIFY_LEARNED = "relayout learned a word (see `relayout rules list`)"
+NOTIFY_KEPT = "relayout will leave a word that exists in both layouts alone"
 
 
 def notify_send(message: str) -> None:
@@ -64,6 +70,7 @@ class Daemon:
         replayer=None,
         locked: Callable[[], bool] = lambda: False,
         sleep: Callable[[float], None] = time.sleep,
+        window_probe: Callable[[], str] | None = None,
     ):
         self.layout_pair = layout_pair
         self.buffer = buffer
@@ -79,6 +86,12 @@ class Daemon:
         self.replayer = replayer  # KeyReplayer, or None to type text with wtype
         self.locked = locked
         self._sleep = sleep
+        # Live "which window has focus" query (hyprctl); None skips the check.
+        self.window_probe = window_probe
+        self.window = ""  # focused window address, from compositor events
+        # Bumped whenever focus may have moved; a correction captured before
+        # a bump must not be typed afterwards (it would land in another window).
+        self.focus_serial = 0
         self.app = ""
         self.layers: set[str] = set()
         self.last: Correction | None = None
@@ -102,14 +115,37 @@ class Daemon:
     def set_app(self, app: str) -> None:
         if app != self.app:
             self.app = app
-            self.buffer.clear()
-            self.last = None
+            self._focus_moved()
             self.on_change()
+
+    def set_window(self, address: str) -> None:
+        address = hypr_normalize(address)
+        if address != self.window:
+            self.window = address
+            self._focus_moved()
+
+    def _focus_moved(self) -> None:
+        self.focus_serial += 1
+        self.buffer.clear()
+        self.last = None
+
+    def focus_ok(self, started: int | None = None) -> bool:
+        """True while the window the word was typed in still has focus.
+
+        ``started`` is ``focus_serial`` when the word was captured. The live
+        probe covers focus changes whose event has not arrived yet.
+        """
+        if started is not None and started != self.focus_serial:
+            return False
+        if self.window_probe is not None:
+            return hypr_normalize(self.window_probe()) == self.window
+        return True
 
     def set_layer(self, namespace: str, opened: bool) -> None:
         ns = namespace.lower()
         before = self.suppressed()
         (self.layers.add if opened else self.layers.discard)(ns)
+        self.focus_serial += 1  # a layer surface may have taken the keyboard
         if ns in self.exclude_layers:
             self.buffer.clear()
         if before != self.suppressed():
@@ -174,11 +210,16 @@ class Daemon:
             extra_margin,
         )
 
-    def auto_correct(self, chunk, spaces: int = 1, extra_margin: float = 0.0) -> bool:
+    def auto_correct(
+        self, chunk, spaces: int = 1, extra_margin: float = 0.0, focus: int | None = None
+    ) -> bool:
         """Called right after Space (spaces=1) or a word-ending punctuation key
         (spaces=0): retype the word if misspelled in the current layout.
-        Returns True if it did."""
+        ``focus`` is ``focus_serial`` when the word was captured. Returns True
+        if it retyped."""
         if not chunk or spaces > 1 or not self.store.auto or self.suppressed():
+            return False
+        if focus is not None and focus != self.focus_serial:
             return False
         if spaces == 0 and len(chunk) < 2:
             return False  # punctuation alone is not a word
@@ -188,6 +229,8 @@ class Daemon:
         cur = next(iter(layouts))
         cur_text, other_text = self.layout_pair.render(chunk, cur)
         if not self.should_flip(chunk, cur, cur_text, other_text, extra_margin):
+            return False
+        if not self.focus_ok(focus):
             return False
         self._retype(chunk, cur, cur_text, other_text, spaces, auto=True)
         return True
@@ -216,9 +259,21 @@ class Daemon:
             cur_text, other_text, cur, spaces, auto, self.clock(), tuple(chunk)
         )
 
-    def correct(self) -> None:
+    def correct(self, focus: int | None = None) -> bool:
         """The hotkey: toggle the last corrected word back and forth, else flip
-        the selection or the last word."""
+        the selection or the last word.
+
+        Returns False, and does nothing, where relayout is switched off (an
+        excluded app, the polkit prompt, the lock screen) or when focus moved
+        since the keys were pressed. Password managers and lock screens must
+        be safe from the manual flip too.
+        """
+        if self.suppressed() or not self.focus_ok(focus):
+            return False
+        self._correct()
+        return True
+
+    def _correct(self) -> None:
         last = self.last
         if last and self.clock() - last.at <= UNDO_WINDOW_S:
             self._toggle(last)
@@ -277,11 +332,11 @@ class Daemon:
                 # `of` stays English): stop guessing, never flip either.
                 self.store.add_keep(key, twin)
                 if self.notify:
-                    self.notify(f"learned: “{key}” / “{twin}” are never flipped")
+                    self.notify(NOTIFY_KEPT)
             else:
                 self.store.add_word(key, layout)
                 if self.notify:
-                    self.notify(f"learned: “{key}” is always {layout}")
+                    self.notify(NOTIFY_LEARNED)
             self.on_change()
         else:
             self._counts[(key, layout)] = n
@@ -317,7 +372,8 @@ class Daemon:
         if cmd == "status":
             return json.dumps(self.status(), ensure_ascii=False)
         if cmd == "flip":
-            self.correct()
+            if not self.correct():
+                return "error: not applied (relayout is off here, or focus moved)"
             return "ok"
         if cmd == "auto":
             mode = args[0]

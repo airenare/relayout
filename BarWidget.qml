@@ -6,7 +6,7 @@ import qs.Commons
 import qs.Ui
 
 // Relayout bar widget. All state lives in the relayout daemon; this widget
-// only talks to it through the `relayout` CLI (`subscribe` for live state,
+// only talks to it through the installed `relayout` CLI (`subscribe` for live state,
 // other subcommands for edits). Arguments are always passed as arrays, never
 // through a shell.
 Panel {
@@ -87,6 +87,11 @@ Panel {
     root.rules = list
   }
 
+  // The installed CLI, by absolute path: never whatever `relayout` happens to
+  // be first on PATH (the installer refuses to replace a command it did not
+  // create, and this widget must not run that one).
+  readonly property string cli: Quickshell.env("HOME") + "/.local/share/relayout/.venv/bin/relayout"
+
   // Run a relayout subcommand; calls made while one is in flight are queued.
   property var queue: []
   function run(args) {
@@ -97,7 +102,7 @@ Panel {
     if (actionProc.running || root.queue.length === 0) return
     var next = root.queue[0]
     root.queue = root.queue.slice(1)
-    actionProc.command = ["relayout"].concat(next)
+    actionProc.command = [root.cli].concat(next)
     actionProc.running = true
   }
 
@@ -108,7 +113,7 @@ Panel {
   Process {
     id: watchProc
     // pdeathsig: don't leave an orphaned subscriber if the shell dies.
-    command: ["setpriv", "--pdeathsig", "TERM", "relayout", "subscribe"]
+    command: ["setpriv", "--pdeathsig", "TERM", root.cli, "subscribe"]
     onRunningChanged: if (!running) root.daemonUp = false
     onExited: watchRestart.restart()
     stdout: SplitParser {

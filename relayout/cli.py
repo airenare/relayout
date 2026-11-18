@@ -8,7 +8,7 @@ from relayout.config import load_config
 from relayout.daemon import Daemon, notify_send
 from relayout.detect import Detector, Params
 from relayout.hotkey import HotkeyDetector
-from relayout.hypr import CachedLock, HyprLayout
+from relayout.hypr import CachedLock, HyprLayout, active_window_address
 from relayout.output import KeyReplayer
 from relayout.keymap import LayoutPair
 from relayout.rules import Store
@@ -60,6 +60,7 @@ def main() -> None:
         notify=notify_send if auto["notify"] else None,
         replayer=replayer,
         locked=CachedLock(),
+        window_probe=active_window_address,
     )
     asyncio.run(app.run(daemon, lookup, hotkey))
 

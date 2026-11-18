@@ -19,9 +19,11 @@ def send_backspaces(count: int) -> None:
 
 
 def type_text(text: str) -> None:
+    """Type ``text``. It goes to wtype on stdin ("-"), never as an argument:
+    process arguments are readable by other local users (`ps`, /proc)."""
     if not text:
         return
     try:
-        subprocess.run(["wtype", text], check=False)
+        subprocess.run(["wtype", "-"], input=text.encode("utf-8"), check=False)
     except FileNotFoundError:
         pass

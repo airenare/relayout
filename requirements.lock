@@ -1,11 +1,8 @@
-# Exact, hash-checked install set used by scripts/install.sh
-# (pip install --require-hashes --no-deps -r requirements.lock).
-# Refresh: pip download --no-deps the pinned versions and run sha256sum, or
-# `pip hash`; then bump here and test with scripts/install.sh.
-setuptools==80.9.0 \
-    --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922
-wheel==0.45.1 \
-    --hash=sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248
+# Runtime packages with exact versions and sha256 hashes, installed by
+# scripts/install.sh after requirements-build.lock:
+#   pip install --require-hashes --no-deps --no-build-isolation -r requirements.lock
+# Refresh: pip download --no-deps the pinned versions, `pip hash` each file
+# (every wheel and the sdist of a release), then run scripts/install.sh to test.
 evdev==2.0.0 \
     --hash=sha256:442fb3f4c8dfc9e61e901133c356220c02d663eca8f34722e0cecdd637eba504
 xkbcommon==1.5.1 \

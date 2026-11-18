@@ -124,6 +124,16 @@ def active_window_class() -> str:
     return str(hyprctl_json("activewindow").get("class", ""))
 
 
+def normalize_address(address: str) -> str:
+    """Window addresses are `0x55cb...` in hyprctl and bare hex in events."""
+    address = (address or "").strip().lower()
+    return address[2:] if address.startswith("0x") else address
+
+
+def active_window_address() -> str:
+    return normalize_address(str(hyprctl_json("activewindow").get("address", "")))
+
+
 def layout_index(devices: dict, layout: str) -> int | None:
     """Index of ``layout`` in the main keyboard's layout list, if present."""
     keyboards = devices.get("keyboards")

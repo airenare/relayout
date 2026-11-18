@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Install relayout for the current user. Usage: ./scripts/install.sh [--force]
 #   --force   replace a service file or `relayout` command that relayout did not create
+#   --check   only verify tools and existing files; change nothing
 set -euo pipefail
 
 FORCE=0
+CHECK=0
 for arg in "$@"; do
     case "$arg" in
         --force) FORCE=1 ;;
-        -h|--help) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --check) CHECK=1 ;;
+        -h|--help) sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -37,18 +40,24 @@ fi
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
     || { echo "error: Python 3.11 or newer is required" >&2; exit 1; }
 
-# Refuse to overwrite files we did not create (unless --force).
+# Refuse to overwrite files we did not create (unless --force). Nothing here
+# trusts a symlink: a link is never "ours" by what it points at, and every
+# replacement below swaps the directory entry itself instead of writing through.
+absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 owned_service() {
-    [ ! -e "$SERVICE_FILE" ] && return 0
+    absent "$SERVICE_FILE" && return 0
+    [ -f "$SERVICE_FILE" ] && [ ! -L "$SERVICE_FILE" ] || return 1
     grep -q 'managed-by: relayout' "$SERVICE_FILE" 2>/dev/null \
-        || grep -q "^ExecStart=.*/share/relayout/.venv/bin/relayoutd" "$SERVICE_FILE" 2>/dev/null
+        || grep -q "^ExecStart=$INSTALL_DIR/.venv/bin/relayoutd\$" "$SERVICE_FILE" 2>/dev/null \
+        || grep -q '^ExecStart=%h/.local/share/relayout/.venv/bin/relayoutd$' "$SERVICE_FILE" 2>/dev/null
 }
 owned_command() {
-    { [ ! -e "$COMMAND" ] && [ ! -L "$COMMAND" ]; } && return 0
+    absent "$COMMAND" && return 0
     [ -L "$COMMAND" ] && [ "$(readlink "$COMMAND")" = "$INSTALL_DIR/.venv/bin/relayout" ]
 }
 owned_install_dir() {
-    [ ! -e "$INSTALL_DIR" ] && return 0
+    absent "$INSTALL_DIR" && return 0
+    [ -d "$INSTALL_DIR" ] && [ ! -L "$INSTALL_DIR" ] || return 1
     [ -z "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ] && return 0
     grep -q '^name = "relayout"' "$INSTALL_DIR/pyproject.toml" 2>/dev/null
 }
@@ -60,9 +69,18 @@ for check in "owned_install_dir:$INSTALL_DIR" "owned_service:$SERVICE_FILE" "own
         conflict=1
     fi
 done
+if [ -L "$INSTALL_DIR" ]; then
+    echo "$INSTALL_DIR is a symlink; relayout will not install through it." >&2
+    exit 1                       # not even --force: it would write elsewhere
+fi
 if [ "$conflict" = 1 ] && [ "$FORCE" = 0 ]; then
     echo "Move it aside, or re-run with --force to replace it." >&2
     exit 1
+fi
+
+if [ "$CHECK" = 1 ]; then
+    echo "check passed: nothing in the way"
+    exit 0
 fi
 
 if [ -z "$SCRATCH" ] && ! groups "$USER" | grep -qw input; then
@@ -77,16 +95,31 @@ rsync -a --exclude ".venv" --exclude ".git" --exclude "__pycache__" \
     --exclude "*.egg-info" "$SRC/" "$INSTALL_DIR/"
 
 # Exact versions with hashes: the same commit always installs the same code.
+# A symlinked .venv would make --clear wipe whatever it points at.
+[ -L "$INSTALL_DIR/.venv" ] && rm -f "$INSTALL_DIR/.venv"
 python3 -m venv --clear "$INSTALL_DIR/.venv"
-PIP="$INSTALL_DIR/.venv/bin/pip"
-"$PIP" install --quiet --require-hashes --no-deps -r "$INSTALL_DIR/requirements.lock"
-"$PIP" install --quiet --no-deps --no-build-isolation --no-index "$INSTALL_DIR"
+# --isolated: ignore PIP_* variables and user pip.conf (extra indexes, hooks).
+PIP=("$INSTALL_DIR/.venv/bin/pip" --isolated --disable-pip-version-check)
+# 1. build tools, by hash. 2. runtime packages, built with exactly those
+# (no build isolation, so no unpinned build requirement is fetched).
+# 3. relayout itself.
+"${PIP[@]}" install --quiet --require-hashes --no-deps -r "$INSTALL_DIR/requirements-build.lock"
+"${PIP[@]}" install --quiet --require-hashes --no-deps --no-build-isolation -r "$INSTALL_DIR/requirements.lock"
+"${PIP[@]}" install --quiet --no-deps --no-build-isolation --no-index "$INSTALL_DIR"
 "$INSTALL_DIR/.venv/bin/python" -c 'import evdev, xkbcommon.xkb, relayout.keymap' \
     || { echo "error: installed packages failed to import; aborting before touching the service" >&2; exit 1; }
 
-cp "$INSTALL_DIR/packaging/relayout.service" "$SERVICE_FILE"
-# `relayout` control command (also used by the Omarchy bar widget)
-ln -sfn "$INSTALL_DIR/.venv/bin/relayout" "$COMMAND"
+# Swap the directory entries themselves (rename), so an existing symlink is
+# replaced rather than written through.
+tmp_unit="$(mktemp "$SERVICE_DIR/.relayout.service.XXXXXX")"
+cp "$INSTALL_DIR/packaging/relayout.service" "$tmp_unit"
+chmod 644 "$tmp_unit"
+mv -fT "$tmp_unit" "$SERVICE_FILE"
+# `relayout` control command, for your shell (the bar widget calls the
+# installed copy by absolute path and never looks at PATH)
+tmp_link="$BIN_DIR/.relayout.XXXXXX"; tmp_link="$(mktemp -u "$tmp_link")"
+ln -s "$INSTALL_DIR/.venv/bin/relayout" "$tmp_link"
+mv -fT "$tmp_link" "$COMMAND"
 
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     cat > "$CONFIG_DIR/config.toml" <<'CFG'

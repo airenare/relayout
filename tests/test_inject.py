@@ -16,11 +16,11 @@ def test_send_backspaces_zero_is_noop():
         mock_run.assert_not_called()
 
 
-def test_type_text_calls_wtype_with_text():
+def test_type_text_sends_text_on_stdin_not_in_arguments():
     with patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
         type_text("привет")
-        args = mock_run.call_args[0][0]
-        assert args == ["wtype", "привет"]
+        assert mock_run.call_args[0][0] == ["wtype", "-"]
+        assert mock_run.call_args[1]["input"] == "привет".encode()
 
 
 def test_type_text_empty_string_is_noop():

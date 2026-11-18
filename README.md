@@ -45,7 +45,10 @@ written to disk.
   `gcc`), text typed with Ctrl/Alt/Super held, and anything after a click or
   arrow key. Password managers, the polkit prompt and the lock screen are
   excluded by default, and because it only acts when you press Space or
-  punctuation, passwords are rarely affected.
+  punctuation, passwords are rarely affected. Exclusions cover the
+  double-Shift hotkey and `relayout flip` too, not just auto-correction, and a
+  correction is dropped if focus moves to another window before it runs, so a
+  word is never typed into the wrong window.
 - **Works in every app.** A correction replays the same physical keys on a
   virtual keyboard after switching the layout (tested in a terminal and
   Chromium); if `/dev/uinput` isn't writable it falls back to `wtype`.
@@ -76,6 +79,9 @@ relayout has to see what you type, so:
   after 10 s idle. Nothing is logged or sent anywhere.
 - `~/.local/share/relayout/state.json` stores only your settings, excluded
   apps and words you taught it by hand. It is plain JSON.
+- Retyped text reaches `wtype` on stdin, never as a process argument (those
+  are readable by other local users), and notifications never contain the
+  words you typed.
 - The `relayout` command and the widget talk to the daemon over a Unix socket
   at `$XDG_RUNTIME_DIR/relayout.sock` (mode 0600, your user only).
 - Reading keyboards needs membership in the `input` group. Any program
@@ -107,13 +113,20 @@ out and in, then re-run it. Re-run it after `git pull` to update.
 
 The installer is deliberately conservative:
 
-- Dependencies are installed from `requirements.lock` with exact versions and
-  hash checking (`pip --require-hashes --no-deps`) into a fresh virtualenv, so
-  one commit always installs the same code. Nothing else is resolved from the
-  network.
-- It only replaces files relayout created. If `~/.config/systemd/user/relayout.service`,
-  `~/.local/bin/relayout` or `~/.local/share/relayout` already exists and
-  belongs to something else, it stops and says so; `--force` overrides.
+- Dependencies are installed with exact versions and hash checking
+  (`pip --require-hashes --no-deps`) into a fresh virtualenv: the build tools
+  from `requirements-build.lock` first, then `requirements.lock` built with
+  `--no-build-isolation` against exactly those, so no build requirement is
+  resolved outside the lock and one commit always installs the same code. pip
+  runs with `--isolated`, ignoring `PIP_*` variables and your `pip.conf`.
+- It only replaces files relayout created, and never follows a symlink: a
+  link is not "ours" because of what it points at, and replacements swap the
+  directory entry instead of writing through it. If
+  `~/.config/systemd/user/relayout.service`, `~/.local/bin/relayout` or
+  `~/.local/share/relayout` already exists and belongs to something else, it
+  stops and says so; `--force` replaces the unit and the command, but never
+  installs through a symlinked `~/.local/share/relayout`. `--check` only
+  reports what is in the way.
 - It checks for `python3`, `venv`, `rsync` and `systemctl` up front.
 
 If `/dev/uinput` isn't writable the script says so and relayout retypes with
@@ -126,6 +139,10 @@ omarchy plugin add https://github.com/airenare/relayout --enable
 ```
 
 ![The bar widget panel](docs/widget.png)
+
+The widget runs the installed copy of the command
+(`~/.local/share/relayout/.venv/bin/relayout`) by absolute path, never whatever
+`relayout` is first on `PATH`.
 
 A keyboard icon, dimmed while auto-correction is off or paused (excluded
 app, polkit prompt, lock screen). Left click opens a panel: auto-correct

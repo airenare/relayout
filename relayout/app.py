@@ -26,11 +26,14 @@ async def watch_hyprland(daemon, lookup: hypr.HyprLayout) -> None:
         lookup.events_connected = True
         lookup.invalidate()
         daemon.set_app(hypr.active_window_class())
+        daemon.set_window(hypr.active_window_address())
         try:
             while line := await reader.readline():
                 name, _, data = line.decode("utf-8", "replace").rstrip("\n").partition(">>")
                 if name == "activewindow":
                     daemon.set_app(data.split(",", 1)[0])
+                elif name == "activewindowv2":
+                    daemon.set_window(data)
                 elif name == "openlayer":
                     daemon.set_layer(data, True)
                 elif name == "closelayer":

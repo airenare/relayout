@@ -89,7 +89,7 @@ def _key_name_for(code: int) -> str | None:
     return name
 
 
-async def wait_for_quiet(held, epoch_now, started: int,
+async def wait_for_quiet(held, epoch_now, started,
                          max_wait: float = None, settle: float = None) -> bool:
     """Wait until no key at all is held, so replayed keys are not shifted.
 
@@ -128,15 +128,20 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
     epoch = 0
     pointer = PointerGestures()
 
-    async def auto_correct_when_idle(
-        chunk, spaces: int, started: int, extra_margin: float = 0.0
-    ) -> None:
-        if await wait_for_quiet(held, lambda: epoch, started):
-            daemon.auto_correct(chunk, spaces, extra_margin)
+    def stamp() -> tuple[int, int]:
+        """What must stay the same until a correction runs: no other key was
+        typed, and focus has not moved to another window."""
+        return (epoch, daemon.focus_serial)
 
-    async def correct_when_idle(started: int) -> None:
-        if await wait_for_quiet(held, lambda: epoch, started):
-            daemon.correct()
+    async def auto_correct_when_idle(
+        chunk, spaces: int, started: tuple[int, int], extra_margin: float = 0.0
+    ) -> None:
+        if await wait_for_quiet(held, stamp, started):
+            daemon.auto_correct(chunk, spaces, extra_margin, started[1])
+
+    async def correct_when_idle(started: tuple[int, int]) -> None:
+        if await wait_for_quiet(held, stamp, started):
+            daemon.correct(started[1])
 
     async def read_device(device: evdev.InputDevice):
         nonlocal epoch
@@ -183,7 +188,7 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
                 ):
                     # Runs once the keys are released: the second tap is still
                     # holding Shift, which would capitalise the replayed word.
-                    asyncio.create_task(correct_when_idle(epoch))
+                    asyncio.create_task(correct_when_idle(stamp()))
                     continue
 
                 if event_type not in ("down", "repeat"):
@@ -244,7 +249,7 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
                     margin = LOOSE_TRIGGER_MARGIN if kind == "loose" else 0.0
                 if chunk:
                     asyncio.create_task(
-                        auto_correct_when_idle(chunk, spaces, epoch, margin)
+                        auto_correct_when_idle(chunk, spaces, stamp(), margin)
                     )
         except OSError as exc:
             logger.warning("input device %s disconnected: %s", device.path, exc)
