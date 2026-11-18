@@ -89,6 +89,29 @@ def _key_name_for(code: int) -> str | None:
     return name
 
 
+async def wait_for_quiet(held, epoch_now, started: int,
+                         max_wait: float = None, settle: float = None) -> bool:
+    """Wait until no key at all is held, so replayed keys are not shifted.
+
+    A physically held Shift (the second tap of the double-Shift hotkey, or the
+    Shift of a trailing ``?``) would capitalise every replayed key. Returns
+    False, and the correction is dropped, if another key is typed meanwhile
+    (``epoch_now() != started``) or something is still held at the deadline.
+    """
+    max_wait = MAX_WAIT_S if max_wait is None else max_wait
+    settle = SETTLE_S if settle is None else settle
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_wait
+    while loop.time() < deadline:
+        if epoch_now() != started:
+            return False
+        if not held:
+            await asyncio.sleep(settle)
+            return epoch_now() == started and not held
+        await asyncio.sleep(0.01)
+    return False
+
+
 async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
     keyboards = find_keyboards()
     if not keyboards:
@@ -108,17 +131,12 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
     async def auto_correct_when_idle(
         chunk, spaces: int, started: int, extra_margin: float = 0.0
     ) -> None:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + MAX_WAIT_S
-        while loop.time() < deadline:
-            if epoch != started:
-                return
-            if not (held - SHIFT_KEYS):
-                await asyncio.sleep(SETTLE_S)
-                if epoch == started and not (held - SHIFT_KEYS):
-                    daemon.auto_correct(chunk, spaces, extra_margin)
-                return
-            await asyncio.sleep(0.01)
+        if await wait_for_quiet(held, lambda: epoch, started):
+            daemon.auto_correct(chunk, spaces, extra_margin)
+
+    async def correct_when_idle(started: int) -> None:
+        if await wait_for_quiet(held, lambda: epoch, started):
+            daemon.correct()
 
     async def read_device(device: evdev.InputDevice):
         nonlocal epoch
@@ -163,7 +181,9 @@ async def run(daemon, lookup, hotkey: HotkeyDetector) -> None:
                 if event_type == "down" and hotkey.feed(
                     key_name, "down", time.monotonic()
                 ):
-                    daemon.correct()
+                    # Runs once the keys are released: the second tap is still
+                    # holding Shift, which would capitalise the replayed word.
+                    asyncio.create_task(correct_when_idle(epoch))
                     continue
 
                 if event_type not in ("down", "repeat"):
