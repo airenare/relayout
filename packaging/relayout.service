@@ -1,3 +1,4 @@
+# managed-by: relayout (scripts/install.sh)
 [Unit]
 Description=relayout - local keyboard layout autocorrect daemon
 After=graphical-session.target

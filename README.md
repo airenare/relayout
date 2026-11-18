@@ -76,8 +76,10 @@ relayout has to see what you type, so:
 ## Requirements
 
 - Linux, Wayland, Hyprland (`hyprctl`); Omarchy is only needed for the widget
-- Python 3.11+ and `libxkbcommon` (the install script pulls the Python
-  packages `xkbcommon` and `evdev` into a private virtualenv)
+- Python 3.11+ with the `venv` module (Debian/Ubuntu: `python3-venv`),
+  `rsync`, systemd (`systemctl --user`), a C compiler and the `libxkbcommon`
+  headers (the Python packages `xkbcommon` and `evdev` are built from source
+  into a private virtualenv)
 - `wl-clipboard` and `wtype` (installed on Omarchy by default); `notify-send`
   is optional, for the "learned a word" notification
 - Write access to `/dev/uinput` for key replay (otherwise `wtype` is used)
@@ -92,8 +94,20 @@ cd relayout
 ```
 
 If you weren't in the `input` group, the script adds you and asks you to log
-out and in, then re-run it. Re-run it after `git pull` to update. If
-`/dev/uinput` isn't writable the script says so and relayout retypes with
+out and in, then re-run it. Re-run it after `git pull` to update.
+
+The installer is deliberately conservative:
+
+- Dependencies are installed from `requirements.lock` with exact versions and
+  hash checking (`pip --require-hashes --no-deps`) into a fresh virtualenv, so
+  one commit always installs the same code. Nothing else is resolved from the
+  network.
+- It only replaces files relayout created. If `~/.config/systemd/user/relayout.service`,
+  `~/.local/bin/relayout` or `~/.local/share/relayout` already exists and
+  belongs to something else, it stops and says so; `--force` overrides.
+- It checks for `python3`, `venv`, `rsync` and `systemctl` up front.
+
+If `/dev/uinput` isn't writable the script says so and relayout retypes with
 `wtype` instead.
 
 ## Bar widget
