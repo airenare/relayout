@@ -92,6 +92,9 @@ class Daemon:
         # Bumped whenever focus may have moved; a correction captured before
         # a bump must not be typed afterwards (it would land in another window).
         self.focus_serial = 0
+        # focus_serial the running correction was captured under; _emit
+        # re-checks it between every input stage.
+        self._token = 0
         self.app = ""
         self.layers: set[str] = set()
         self.last: Correction | None = None
@@ -232,32 +235,51 @@ class Daemon:
             return False
         if not self.focus_ok(focus):
             return False
-        self._retype(chunk, cur, cur_text, other_text, spaces, auto=True)
-        return True
+        self._token = self.focus_serial if focus is None else focus
+        return self._retype(chunk, cur, cur_text, other_text, spaces, auto=True)
 
-    def _emit(self, entries, old_len: int, text: str, spaces: int, layout: str) -> None:
+    def _emit(self, entries, old_len: int, text: str, spaces: int, layout: str) -> bool:
         """Replace ``old_len`` characters (+ trailing spaces) with ``text`` and
-        make ``layout`` active, by key replay when available, else wtype."""
+        make ``layout`` active, by key replay when available, else wtype.
+
+        Focus is re-checked before every stage (backspaces, layout switch,
+        typing); if it moved, nothing further is sent. Returns False then.
+        """
+        ok = lambda: self.focus_ok(self._token)  # noqa: E731
+        if not ok():
+            return False
         if self.replayer is not None:
             self.replayer.backspaces(old_len + spaces)
             if self.hypr:
+                if not ok():
+                    return False
                 self.hypr.switch(layout)
                 self._sleep(LAYOUT_SETTLE_S)
+            if not ok():
+                return False
             self.replayer.replay(entries, spaces)
-            return
+            return True
         self.typist.send_backspaces(old_len + spaces)
+        if not ok():
+            return False
         self.typist.type_text(text + " " * spaces)
         if self.hypr:
+            if not ok():
+                return False
             self.hypr.switch(layout)
+        return True
 
-    def _retype(self, chunk, cur, cur_text, other_text, spaces, auto) -> None:
+    def _retype(self, chunk, cur, cur_text, other_text, spaces, auto) -> bool:
         other = self.layout_pair.other(cur)
-        self._emit(chunk, len(chunk), other_text, spaces, other)
+        if not self._emit(chunk, len(chunk), other_text, spaces, other):
+            self.buffer.clear()
+            return False
         self.buffer.clear()
         self.buffer.context_layout = other
         self.last = Correction(
             cur_text, other_text, cur, spaces, auto, self.clock(), tuple(chunk)
         )
+        return True
 
     def correct(self, focus: int | None = None) -> bool:
         """The hotkey: toggle the last corrected word back and forth, else flip
@@ -270,6 +292,7 @@ class Daemon:
         """
         if self.suppressed() or not self.focus_ok(focus):
             return False
+        self._token = self.focus_serial if focus is None else focus
         self._correct()
         return True
 
@@ -288,27 +311,36 @@ class Daemon:
             if self.selection_armed:
                 selected = self.selector.read_primary_selection()
                 self.selection_armed = False
-                if selected:
+                if selected and self.focus_ok(self._token):
                     self.typist.type_text(self.layout_pair.swap_selection_text(selected))
             return
 
         cur = chunk[-1][2]
         cur_text, other_text = self.layout_pair.render(chunk, cur)
-        self._retype(chunk, cur, cur_text, other_text, spaces, auto=False)
+        if not self._retype(chunk, cur, cur_text, other_text, spaces, auto=False):
+            return
         self._learn(other_text, self.layout_pair.other(cur), cur_text)
 
     def _toggle(self, last: Correction) -> None:
         """Swap the corrected word and the original again, as often as asked."""
         if last.flipped:  # back to what was typed
-            self._emit(last.chunk, len(last.new_text), last.orig_text, last.spaces, last.orig_layout)
-            last.flipped = False
-            if last.auto:
-                self._learn(last.orig_text, last.orig_layout, last.new_text)
+            sent = self._emit(
+                last.chunk, len(last.new_text), last.orig_text, last.spaces, last.orig_layout
+            )
         else:  # corrected again
-            self._emit(
+            sent = self._emit(
                 last.chunk, len(last.orig_text), last.new_text, last.spaces,
                 self.layout_pair.other(last.orig_layout),
             )
+        if not sent:
+            self.buffer.clear()
+            self.last = None
+            return
+        if last.flipped:
+            last.flipped = False
+            if last.auto:
+                self._learn(last.orig_text, last.orig_layout, last.new_text)
+        else:
             last.flipped = True
         last.at = self.clock()
         self.buffer.clear()

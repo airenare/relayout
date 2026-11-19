@@ -109,6 +109,71 @@ def test_changing_window_forgets_the_typed_word_and_the_undo(pair, detector, tmp
     assert d.last is None and buf.last_word() == ([], 0)
 
 
+# --- focus stays bound through every input stage ------------------------------
+
+def _drifting(pair, detector, tmp_path, stage):
+    """A daemon whose focus moves to another window right after ``stage``."""
+    win = {"now": "0xaaa"}
+    d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"])
+    d.set_window("0xaaa")
+    orig = getattr(fx, stage)
+
+    def hooked(*a, **k):
+        r = orig(*a, **k)
+        win["now"] = "0xbbb"
+        return r
+
+    setattr(fx, stage, hooked)
+    return d, buf, fx
+
+
+def test_focus_change_after_backspaces_stops_the_typing(pair, detector, tmp_path):
+    d, buf, fx = _drifting(pair, detector, tmp_path, "send_backspaces")
+    chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
+    assert d.auto_correct(chunk, spaces, 0.0, d.focus_serial) is False
+    assert [c[0] for c in fx.calls] == ["bs"]          # no text, no switch
+    assert d.last is None                              # nothing to undo later
+
+
+def test_focus_change_after_typing_stops_the_layout_switch(pair, detector, tmp_path):
+    d, buf, fx = _drifting(pair, detector, tmp_path, "type_text")
+    chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
+    d.auto_correct(chunk, spaces, 0.0, d.focus_serial)
+    assert ("switch", "ru") not in fx.calls
+
+
+def test_replay_stages_are_each_guarded(pair, detector, tmp_path):
+    win = {"now": "0xaaa"}
+    log = []
+
+    class Replayer:
+        def backspaces(self, n):
+            log.append("bs")
+            win["now"] = "0xbbb"        # focus leaves while backspaces go out
+
+        def replay(self, entries, spaces):
+            log.append("replay")
+
+    d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"],
+                      replayer=Replayer())
+    d.set_window("0xaaa")
+    chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
+    d.auto_correct(chunk, spaces, 0.0, d.focus_serial)
+    assert log == ["bs"] and ("switch", "ru") not in fx.calls
+
+
+def test_toggle_also_stops_when_focus_moves(pair, detector, tmp_path):
+    win = {"now": "0xaaa"}
+    d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"])
+    d.set_window("0xaaa")
+    typed_ghbdtn(buf, pair)
+    assert d.correct() is True
+    win["now"] = "0xbbb"
+    before = list(fx.calls)
+    assert d.correct() is False                # window moved: nothing is sent
+    assert fx.calls == before
+
+
 # --- typed text never goes through process arguments --------------------------
 
 def test_wtype_gets_the_text_on_stdin(monkeypatch):
@@ -156,6 +221,41 @@ def test_widget_never_runs_relayout_from_path():
     assert 'command: ["relayout"' not in qml
     assert '"relayout", "subscribe"' not in qml
     assert "root.cli" in qml and ".local/share/relayout/.venv/bin/relayout" in qml
+
+
+def test_widget_sends_rule_words_on_stdin_not_argv():
+    qml = (ROOT / "BarWidget.qml").read_text()
+    assert 'root.run(["rules"' not in qml
+    assert "runPrivate(" in qml and '"--stdin"' in qml
+
+
+def test_cli_stdin_mode_reads_the_command_from_stdin(monkeypatch, tmp_path):
+    import io
+    import socket as _socket
+    from relayout import ctl
+
+    sent = []
+
+    class FakeSock:
+        def connect(self, p): pass
+        def sendall(self, b): sent.append(b)
+        def makefile(self, *a, **k): return io.StringIO("ok\n")
+
+    monkeypatch.setattr(ctl.socket, "socket", lambda *a: FakeSock())
+    monkeypatch.setattr(ctl.sys, "stdin", io.StringIO("rules add секрет ru\n"))
+    assert ctl.main(["--stdin"]) == 0
+    assert sent == ["rules add секрет ru\n".encode()]
+
+
+def test_installer_builds_in_staging_before_touching_the_live_runtime():
+    text = (ROOT / "scripts" / "install.sh").read_text()
+    stage_pip = text.index('"${PIP[@]}" install --quiet --no-deps --no-build-isolation --no-index')
+    smoke = text.index('smoke "$STAGE"')
+    swap = text.index('mv -T "$STAGE" "$INSTALL_DIR"')
+    assert stage_pip < smoke < swap
+    assert 'venv --clear "$INSTALL_DIR' not in text       # never clears the live venv
+    assert text.index("rsync") < swap                      # code copied to staging only
+    assert 'rsync -a --exclude ".venv" --exclude ".git" --exclude "__pycache__" \\\n    --exclude "*.egg-info" --exclude "state.json" "$SRC/" "$STAGE/"' in text
 
 
 # --- installer: ownership checks without following links ----------------------

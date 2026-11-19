@@ -62,7 +62,7 @@ Panel {
     if (err === "" && root.effectiveAddLayout === "") err = "No layout available"
     root.addError = err
     if (err !== "") return false
-    root.run(["rules", "add", w, root.effectiveAddLayout])
+    root.runPrivate("rules add " + w + " " + root.effectiveAddLayout)
     return true
   }
 
@@ -95,14 +95,21 @@ Panel {
   // Run a relayout subcommand; calls made while one is in flight are queued.
   property var queue: []
   function run(args) {
-    root.queue = root.queue.concat([args])
+    root.queue = root.queue.concat([{ args: args, line: "" }])
+    root.pump()
+  }
+  // Learned words can be private: send the command on the CLI's stdin, never
+  // as process arguments (visible to other local users via ps and /proc).
+  function runPrivate(line) {
+    root.queue = root.queue.concat([{ args: ["--stdin"], line: line }])
     root.pump()
   }
   function pump() {
     if (actionProc.running || root.queue.length === 0) return
     var next = root.queue[0]
     root.queue = root.queue.slice(1)
-    actionProc.command = [root.cli].concat(next)
+    actionProc.pendingLine = next.line
+    actionProc.command = [root.cli].concat(next.args)
     actionProc.running = true
   }
 
@@ -138,6 +145,9 @@ Panel {
 
   Process {
     id: actionProc
+    property string pendingLine: ""
+    stdinEnabled: true
+    onStarted: if (pendingLine !== "") write(pendingLine + "\n")
     onExited: root.pump()
   }
 
@@ -395,7 +405,7 @@ Panel {
               fontFamily: root.fontFamily
               opacity: row.hasCursor ? 1 : 0.5
               onHovered: function(on) { row.hotButtons += on ? 1 : -1 }
-              onClicked: root.run(["rules", "add", row.modelData.word, root.otherLayout(row.modelData.layout)])
+              onClicked: root.runPrivate("rules add " + row.modelData.word + " " + root.otherLayout(row.modelData.layout))
             }
 
             PanelActionButton {
@@ -409,7 +419,7 @@ Panel {
               fontFamily: root.fontFamily
               opacity: row.hasCursor ? 1 : 0.5
               onHovered: function(on) { row.hotButtons += on ? 1 : -1 }
-              onClicked: root.run(["rules", "rm", row.modelData.word])
+              onClicked: root.runPrivate("rules rm " + row.modelData.word)
             }
           }
         }

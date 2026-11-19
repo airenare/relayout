@@ -90,24 +90,55 @@ if [ -z "$SCRATCH" ] && ! groups "$USER" | grep -qw input; then
     exit 1
 fi
 
-mkdir -p "$INSTALL_DIR" "$SERVICE_DIR" "$CONFIG_DIR" "$BIN_DIR"
+mkdir -p "$SERVICE_DIR" "$CONFIG_DIR" "$BIN_DIR" "$(dirname "$INSTALL_DIR")"
+
+# Build and verify the new runtime in a staging directory next to the live
+# one. The live install (and so the running daemon and widget) is untouched
+# until the staged copy has installed and imported cleanly; a failed build
+# leaves the old runtime exactly as it was.
+STAGE="$INSTALL_DIR.staging"
+OLD="$INSTALL_DIR.old"
+for stale in "$STAGE" "$OLD"; do
+    if [ -L "$stale" ]; then rm -f "$stale"; else rm -rf "$stale"; fi
+done
+trap 'rm -rf "$STAGE"' EXIT
+mkdir "$STAGE"
 rsync -a --exclude ".venv" --exclude ".git" --exclude "__pycache__" \
-    --exclude "*.egg-info" "$SRC/" "$INSTALL_DIR/"
+    --exclude "*.egg-info" --exclude "state.json" "$SRC/" "$STAGE/"
 
 # Exact versions with hashes: the same commit always installs the same code.
-# A symlinked .venv would make --clear wipe whatever it points at.
-[ -L "$INSTALL_DIR/.venv" ] && rm -f "$INSTALL_DIR/.venv"
-python3 -m venv --clear "$INSTALL_DIR/.venv"
+python3 -m venv --clear "$STAGE/.venv"
 # --isolated: ignore PIP_* variables and user pip.conf (extra indexes, hooks).
-PIP=("$INSTALL_DIR/.venv/bin/pip" --isolated --disable-pip-version-check)
+PIP=("$STAGE/.venv/bin/pip" --isolated --disable-pip-version-check)
 # 1. build tools, by hash. 2. runtime packages, built with exactly those
 # (no build isolation, so no unpinned build requirement is fetched).
 # 3. relayout itself.
-"${PIP[@]}" install --quiet --require-hashes --no-deps -r "$INSTALL_DIR/requirements-build.lock"
-"${PIP[@]}" install --quiet --require-hashes --no-deps --no-build-isolation -r "$INSTALL_DIR/requirements.lock"
-"${PIP[@]}" install --quiet --no-deps --no-build-isolation --no-index "$INSTALL_DIR"
-"$INSTALL_DIR/.venv/bin/python" -c 'import evdev, xkbcommon.xkb, relayout.keymap' \
-    || { echo "error: installed packages failed to import; aborting before touching the service" >&2; exit 1; }
+"${PIP[@]}" install --quiet --require-hashes --no-deps -r "$STAGE/requirements-build.lock"
+"${PIP[@]}" install --quiet --require-hashes --no-deps --no-build-isolation -r "$STAGE/requirements.lock"
+"${PIP[@]}" install --quiet --no-deps --no-build-isolation --no-index "$STAGE"
+smoke() { "$1/.venv/bin/python" -c 'import evdev, xkbcommon.xkb, relayout.keymap'; }
+smoke "$STAGE" \
+    || { echo "error: staged packages failed to import; the existing install was not changed" >&2; exit 1; }
+
+# Switch over. A venv records its own path in its scripts, so rewrite those,
+# check the result, and put the old runtime back if it does not import.
+if [ -e "$INSTALL_DIR" ]; then
+    [ -f "$INSTALL_DIR/state.json" ] && cp -p "$INSTALL_DIR/state.json" "$STAGE/state.json"
+    mv -T "$INSTALL_DIR" "$OLD"
+fi
+mv -T "$STAGE" "$INSTALL_DIR"
+for f in "$INSTALL_DIR"/.venv/bin/*; do
+    [ -f "$f" ] && [ ! -L "$f" ] && grep -Iq "$STAGE" "$f" 2>/dev/null \
+        && sed -i "s|$STAGE|$INSTALL_DIR|g" "$f"
+done
+if ! smoke "$INSTALL_DIR" || ! "$INSTALL_DIR/.venv/bin/relayout" --help >/dev/null 2>&1; then
+    echo "error: the new runtime failed after the switch; restoring the previous one" >&2
+    rm -rf "$INSTALL_DIR"
+    [ -e "$OLD" ] && mv -T "$OLD" "$INSTALL_DIR"
+    exit 1
+fi
+rm -rf "$OLD"
+trap - EXIT
 
 # Swap the directory entries themselves (rename), so an existing symlink is
 # replaced rather than written through.

@@ -3,7 +3,9 @@
     relayout status | flip | subscribe
     relayout auto on|off|toggle
     relayout exclude add|rm CLASS | list
-    relayout rules list | add WORD [LAYOUT] | rm WORD
+    relayout rules list | add WORD [LAYOUT] | keep WORD | rm WORD
+    relayout --stdin        read the command line from stdin (keeps words that
+                            may be private out of the process arguments)
 """
 import socket
 import sys
@@ -18,7 +20,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args or args[0] in ("-h", "--help"):
         print(USAGE)
         return 0
-    line = " ".join(args)
+    if args == ["--stdin"]:
+        line = sys.stdin.readline(4096).strip()
+    else:
+        line = " ".join(args)
     if "\n" in line:
         print("error: newline in arguments", file=sys.stderr)
         return 2

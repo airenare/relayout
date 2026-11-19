@@ -47,8 +47,9 @@ written to disk.
   excluded by default, and because it only acts when you press Space or
   punctuation, passwords are rarely affected. Exclusions cover the
   double-Shift hotkey and `relayout flip` too, not just auto-correction, and a
-  correction is dropped if focus moves to another window before it runs, so a
-  word is never typed into the wrong window.
+  correction is dropped if focus moves to another window before it runs, and
+  focus is re-checked before each step (backspaces, layout switch, typing), so
+  a word is never typed into the wrong window.
 - **Works in every app.** A correction replays the same physical keys on a
   virtual keyboard after switching the layout (tested in a terminal and
   Chromium); if `/dev/uinput` isn't writable it falls back to `wtype`.
@@ -80,8 +81,9 @@ relayout has to see what you type, so:
 - `~/.local/share/relayout/state.json` stores only your settings, excluded
   apps and words you taught it by hand. It is plain JSON.
 - Retyped text reaches `wtype` on stdin, never as a process argument (those
-  are readable by other local users), and notifications never contain the
-  words you typed.
+  are readable by other local users), notifications never contain the words
+  you typed, and the widget sends learned words to the daemon on stdin
+  (`relayout --stdin`), not as arguments.
 - The `relayout` command and the widget talk to the daemon over a Unix socket
   at `$XDG_RUNTIME_DIR/relayout.sock` (mode 0600, your user only).
 - Reading keyboards needs membership in the `input` group. Any program
@@ -113,6 +115,9 @@ out and in, then re-run it. Re-run it after `git pull` to update.
 
 The installer is deliberately conservative:
 
+- It builds the new runtime in a staging directory and only switches to it
+  after it has installed and imported cleanly; if anything fails, the running
+  install (daemon and widget) is left exactly as it was.
 - Dependencies are installed with exact versions and hash checking
   (`pip --require-hashes --no-deps`) into a fresh virtualenv: the build tools
   from `requirements-build.lock` first, then `requirements.lock` built with
