@@ -242,14 +242,15 @@ class Daemon:
         """Replace ``old_len`` characters (+ trailing spaces) with ``text`` and
         make ``layout`` active, by key replay when available, else wtype.
 
-        Focus is re-checked before every stage (backspaces, layout switch,
-        typing); if it moved, nothing further is sent. Returns False then.
+        Focus is re-checked before every stage and before every single key of a
+        replay (backspaces, layout switch, typing); if it moved, nothing further is sent. Returns False then.
         """
         ok = lambda: self.focus_ok(self._token)  # noqa: E731
         if not ok():
             return False
         if self.replayer is not None:
-            self.replayer.backspaces(old_len + spaces)
+            if not self.replayer.backspaces(old_len + spaces, ok):
+                return False
             if self.hypr:
                 if not ok():
                     return False
@@ -257,8 +258,7 @@ class Daemon:
                 self._sleep(LAYOUT_SETTLE_S)
             if not ok():
                 return False
-            self.replayer.replay(entries, spaces)
-            return True
+            return bool(self.replayer.replay(entries, spaces, ok))
         self.typist.send_backspaces(old_len + spaces)
         if not ok():
             return False

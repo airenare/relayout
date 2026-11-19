@@ -48,7 +48,8 @@ written to disk.
   punctuation, passwords are rarely affected. Exclusions cover the
   double-Shift hotkey and `relayout flip` too, not just auto-correction, and a
   correction is dropped if focus moves to another window before it runs, and
-  focus is re-checked before each step (backspaces, layout switch, typing), so
+  focus is re-checked before each step and before every single key of the
+  replay, so
   a word is never typed into the wrong window.
 - **Works in every app.** A correction replays the same physical keys on a
   virtual keyboard after switching the layout (tested in a terminal and
@@ -117,7 +118,9 @@ The installer is deliberately conservative:
 
 - It builds the new runtime in a staging directory and only switches to it
   after it has installed and imported cleanly; if anything fails, the running
-  install (daemon and widget) is left exactly as it was.
+  install (daemon and widget) is left exactly as it was. If an update is
+  interrupted mid-switch, the next run restores the previous install (and your
+  rules) from `relayout.old` instead of deleting it.
 - Dependencies are installed with exact versions and hash checking
   (`pip --require-hashes --no-deps`) into a fresh virtualenv: the build tools
   from `requirements-build.lock` first, then `requirements.lock` built with

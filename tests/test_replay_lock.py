@@ -47,11 +47,13 @@ class Recorder:
     def __init__(self):
         self.calls = []
 
-    def backspaces(self, n):
+    def backspaces(self, n, guard=None):
         self.calls.append(("bs", n))
+        return True
 
-    def replay(self, entries, spaces=0):
+    def replay(self, entries, spaces=0, guard=None):
         self.calls.append(("replay", [e[0] for e in entries], spaces))
+        return True
 
     def switch(self, layout):
         self.calls.append(("switch", layout))

@@ -57,13 +57,24 @@ class KeyReplayer:
             self._ui.syn()
         self._sleep(KEY_PACE_S)
 
-    def backspaces(self, count: int) -> None:
+    def backspaces(self, count: int, guard=None) -> bool:
+        """Press Backspace ``count`` times. ``guard`` is asked before every key
+        and stops the run (returning False) the moment it says no."""
         for _ in range(count):
+            if guard is not None and not guard():
+                return False
             self._tap(self._e.KEY_BACKSPACE)
+        return True
 
-    def replay(self, entries, spaces: int = 0) -> None:
-        """Press the buffer entries' keys (xkb keycode, level, ...) again."""
+    def replay(self, entries, spaces: int = 0, guard=None) -> bool:
+        """Press the buffer entries' keys (xkb keycode, level, ...) again,
+        asking ``guard`` before each key; stops and returns False if it says no."""
         for entry in entries:
+            if guard is not None and not guard():
+                return False
             self._tap(entry[0] - XKB_OFFSET, shift=entry[1] == 1)
         for _ in range(spaces):
+            if guard is not None and not guard():
+                return False
             self._tap(self._e.KEY_SPACE)
+        return True

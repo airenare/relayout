@@ -98,9 +98,20 @@ mkdir -p "$SERVICE_DIR" "$CONFIG_DIR" "$BIN_DIR" "$(dirname "$INSTALL_DIR")"
 # leaves the old runtime exactly as it was.
 STAGE="$INSTALL_DIR.staging"
 OLD="$INSTALL_DIR.old"
-for stale in "$STAGE" "$OLD"; do
-    if [ -L "$stale" ]; then rm -f "$stale"; else rm -rf "$stale"; fi
-done
+smoke() { "$1/.venv/bin/python" -c 'import evdev, xkbcommon.xkb, relayout.keymap'; }
+
+# A previous update that was interrupted mid-switch leaves the working install
+# (and your learned rules) only in $OLD. Never delete that blindly: put it
+# back if the live directory is missing or does not import.
+if [ -d "$OLD" ] && [ ! -L "$OLD" ]; then
+    if [ ! -d "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ] || ! smoke "$INSTALL_DIR" 2>/dev/null; then
+        echo "found an interrupted update: restoring the previous install from $OLD"
+        rm -rf "$INSTALL_DIR"
+        mv -T "$OLD" "$INSTALL_DIR"
+    fi
+fi
+# The staging directory only ever holds an unfinished build: safe to discard.
+if [ -L "$STAGE" ]; then rm -f "$STAGE"; else rm -rf "$STAGE"; fi
 trap 'rm -rf "$STAGE"' EXIT
 mkdir "$STAGE"
 rsync -a --exclude ".venv" --exclude ".git" --exclude "__pycache__" \
@@ -116,12 +127,14 @@ PIP=("$STAGE/.venv/bin/pip" --isolated --disable-pip-version-check)
 "${PIP[@]}" install --quiet --require-hashes --no-deps -r "$STAGE/requirements-build.lock"
 "${PIP[@]}" install --quiet --require-hashes --no-deps --no-build-isolation -r "$STAGE/requirements.lock"
 "${PIP[@]}" install --quiet --no-deps --no-build-isolation --no-index "$STAGE"
-smoke() { "$1/.venv/bin/python" -c 'import evdev, xkbcommon.xkb, relayout.keymap'; }
 smoke "$STAGE" \
     || { echo "error: staged packages failed to import; the existing install was not changed" >&2; exit 1; }
 
 # Switch over. A venv records its own path in its scripts, so rewrite those,
 # check the result, and put the old runtime back if it does not import.
+# The new runtime is verified, so a leftover backup of a still-working install
+# is no longer needed; the live one becomes the new backup until we finish.
+if [ -L "$OLD" ]; then rm -f "$OLD"; else rm -rf "$OLD"; fi
 if [ -e "$INSTALL_DIR" ]; then
     [ -f "$INSTALL_DIR/state.json" ] && cp -p "$INSTALL_DIR/state.json" "$STAGE/state.json"
     mv -T "$INSTALL_DIR" "$OLD"

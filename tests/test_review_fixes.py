@@ -147,12 +147,14 @@ def test_replay_stages_are_each_guarded(pair, detector, tmp_path):
     log = []
 
     class Replayer:
-        def backspaces(self, n):
+        def backspaces(self, n, guard=None):
             log.append("bs")
             win["now"] = "0xbbb"        # focus leaves while backspaces go out
+            return True
 
-        def replay(self, entries, spaces):
+        def replay(self, entries, spaces=0, guard=None):
             log.append("replay")
+            return True
 
     d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"],
                       replayer=Replayer())
@@ -160,6 +162,52 @@ def test_replay_stages_are_each_guarded(pair, detector, tmp_path):
     chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
     d.auto_correct(chunk, spaces, 0.0, d.focus_serial)
     assert log == ["bs"] and ("switch", "ru") not in fx.calls
+
+
+def _real_replayer():
+    from relayout.output import KeyReplayer
+    from .test_replay_lock import FakeE, FakeUinput
+
+    ui = FakeUinput()
+    return KeyReplayer(ui, FakeE, sleep=lambda s: None), ui
+
+
+def test_replay_stops_mid_word_when_focus_leaves():
+    r, ui = _real_replayer()
+    allowed = iter([True, True, False])        # focus moves before the 3rd key
+    done = r.replay([(32, 0, "us", "a")] * 5, 0, lambda: next(allowed, False))
+    assert done is False
+    assert ui.events == [(24, 1), (24, 0)] * 2   # only two keys were sent
+
+
+def test_backspaces_stop_mid_run_when_focus_leaves():
+    r, ui = _real_replayer()
+    allowed = iter([True, False])
+    assert r.backspaces(6, lambda: next(allowed, False)) is False
+    assert ui.events == [(14, 1), (14, 0)]
+
+
+def test_daemon_asks_the_guard_for_every_key(pair, detector, tmp_path):
+    from relayout.output import KeyReplayer
+    from .test_replay_lock import FakeE, FakeUinput
+
+    ui = FakeUinput()
+    win = {"now": "0xaaa", "probes": 0}
+
+    def probe():
+        win["probes"] += 1
+        if win["probes"] > 9:                   # focus leaves part-way through
+            win["now"] = "0xbbb"
+        return win["now"]
+
+    d, buf, fx = make(pair, detector, tmp_path, window_probe=probe,
+                      replayer=KeyReplayer(ui, FakeE, sleep=lambda s: None))
+    d.set_window("0xaaa")
+    chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
+    assert d.auto_correct(chunk, spaces, 0.0, d.focus_serial) is False
+    sent = len([e for e in ui.events if e[1] == 1])
+    assert 0 < sent < 6 + 1 + 6 + 1             # stopped part-way, not all keys
+    assert d.last is None
 
 
 def test_toggle_also_stops_when_focus_moves(pair, detector, tmp_path):
@@ -256,6 +304,44 @@ def test_installer_builds_in_staging_before_touching_the_live_runtime():
     assert 'venv --clear "$INSTALL_DIR' not in text       # never clears the live venv
     assert text.index("rsync") < swap                      # code copied to staging only
     assert 'rsync -a --exclude ".venv" --exclude ".git" --exclude "__pycache__" \\\n    --exclude "*.egg-info" --exclude "state.json" "$SRC/" "$STAGE/"' in text
+
+
+@pytest.mark.skipif(shutil.which("rsync") is None, reason="install.sh needs rsync")
+@pytest.mark.parametrize("live", ["missing", "broken"])
+def test_interrupted_update_is_recovered_not_deleted(tmp_path, live):
+    """The previous install survives a run that dies after the swap began."""
+    home = tmp_path / "home"
+    share = home / ".local" / "share"
+    old = share / "relayout.old"
+    (old / ".venv" / "bin").mkdir(parents=True)
+    (old / "pyproject.toml").write_text('[project]\nname = "relayout"\n')
+    (old / "state.json").write_text('{"words": {"private": "ru"}}')
+    # a "working" runtime: its python imports everything
+    fake_py = old / ".venv" / "bin" / "python"
+    fake_py.write_text("#!/bin/sh\nexit 0\n")
+    fake_py.chmod(0o755)
+    if live == "broken":
+        (share / "relayout" / ".venv" / "bin").mkdir(parents=True)
+        (share / "relayout" / "pyproject.toml").write_text('[project]\nname = "relayout"\n')
+        bad = share / "relayout" / ".venv" / "bin" / "python"
+        bad.write_text("#!/bin/sh\nexit 1\n")
+        bad.chmod(0o755)
+    # make the rebuild fail right away, so only the recovery step is exercised
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    real = shutil.which("python3")
+    (shim / "python3").write_text(
+        f'#!/bin/sh\nif [ "$1" = "-m" ] && [ "$2" = "venv" ]; then exit 1; fi\nexec {real} "$@"\n'
+    )
+    (shim / "python3").chmod(0o755)
+    env = {**os.environ, "RELAYOUT_HOME": str(home), "PATH": f"{shim}:{os.environ['PATH']}"}
+    proc = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "install.sh")], env=env, capture_output=True, text=True
+    )
+    assert proc.returncode != 0
+    assert "restoring the previous install" in proc.stdout
+    assert (share / "relayout" / "state.json").read_text() == '{"words": {"private": "ru"}}'
+    assert not old.exists()
 
 
 # --- installer: ownership checks without following links ----------------------
