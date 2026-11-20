@@ -99,12 +99,20 @@ mkdir -p "$SERVICE_DIR" "$CONFIG_DIR" "$BIN_DIR" "$(dirname "$INSTALL_DIR")"
 STAGE="$INSTALL_DIR.staging"
 OLD="$INSTALL_DIR.old"
 smoke() { "$1/.venv/bin/python" -c 'import evdev, xkbcommon.xkb, relayout.keymap'; }
+# Imports are not enough: the command launchers must start and must not point
+# at the staging directory (an update that died after the swap leaves those).
+healthy() {
+    smoke "$1" \
+        && "$1/.venv/bin/relayout" --help >/dev/null 2>&1 \
+        && [ -x "$1/.venv/bin/relayoutd" ] \
+        && ! grep -qs "$STAGE" "$1/.venv/bin/relayout" "$1/.venv/bin/relayoutd"
+}
 
 # A previous update that was interrupted mid-switch leaves the working install
 # (and your learned rules) only in $OLD. Never delete that blindly: put it
 # back if the live directory is missing or does not import.
 if [ -d "$OLD" ] && [ ! -L "$OLD" ]; then
-    if [ ! -d "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ] || ! smoke "$INSTALL_DIR" 2>/dev/null; then
+    if [ ! -d "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ] || ! healthy "$INSTALL_DIR" 2>/dev/null; then
         echo "found an interrupted update: restoring the previous install from $OLD"
         rm -rf "$INSTALL_DIR"
         mv -T "$OLD" "$INSTALL_DIR"
@@ -144,7 +152,7 @@ for f in "$INSTALL_DIR"/.venv/bin/*; do
     [ -f "$f" ] && [ ! -L "$f" ] && grep -Iq "$STAGE" "$f" 2>/dev/null \
         && sed -i "s|$STAGE|$INSTALL_DIR|g" "$f"
 done
-if ! smoke "$INSTALL_DIR" || ! "$INSTALL_DIR/.venv/bin/relayout" --help >/dev/null 2>&1; then
+if ! healthy "$INSTALL_DIR"; then
     echo "error: the new runtime failed after the switch; restoring the previous one" >&2
     rm -rf "$INSTALL_DIR"
     [ -e "$OLD" ] && mv -T "$OLD" "$INSTALL_DIR"

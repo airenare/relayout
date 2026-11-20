@@ -69,8 +69,8 @@ def test_correct_falls_back_to_displayed_char_when_no_counterpart():
          patch("relayout.daemon.inject.send_backspaces") as mock_backspace:
         daemon.correct()
 
-    mock_backspace.assert_called_once_with(2)
-    mock_type.assert_called_once_with("й*")
+    assert sum(c.args[0] for c in mock_backspace.call_args_list) == 2  # one key per call
+    assert "".join(c.args[0] for c in mock_type.call_args_list) == "й*"
 
 
 def test_correct_noops_when_nothing_to_correct():

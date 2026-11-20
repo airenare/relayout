@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -259,15 +260,29 @@ class Daemon:
             if not ok():
                 return False
             return bool(self.replayer.replay(entries, spaces, ok))
-        self.typist.send_backspaces(old_len + spaces)
-        if not ok():
-            return False
-        self.typist.type_text(text + " " * spaces)
+        # wtype fallback: one call per key so focus is checked before each
+        # (a single call types the whole text and cannot be interrupted).
+        for _ in range(old_len + spaces):
+            if not ok():
+                return False
+            self.typist.send_backspaces(1)
+        for ch in text + " " * spaces:
+            if not ok():
+                return False
+            self.typist.type_text(ch)
         if self.hypr:
             if not ok():
                 return False
             self.hypr.switch(layout)
         return True
+
+    def _type_guarded(self, text: str) -> None:
+        """Type a longer text (a selection) a word at a time, checking focus
+        before each piece."""
+        for piece in re.findall(r"\S+|\s+", text):
+            if not self.focus_ok(self._token):
+                return
+            self.typist.type_text(piece)
 
     def _retype(self, chunk, cur, cur_text, other_text, spaces, auto) -> bool:
         other = self.layout_pair.other(cur)
@@ -311,8 +326,8 @@ class Daemon:
             if self.selection_armed:
                 selected = self.selector.read_primary_selection()
                 self.selection_armed = False
-                if selected and self.focus_ok(self._token):
-                    self.typist.type_text(self.layout_pair.swap_selection_text(selected))
+                if selected:
+                    self._type_guarded(self.layout_pair.swap_selection_text(selected))
             return
 
         cur = chunk[-1][2]

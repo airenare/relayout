@@ -135,6 +135,44 @@ def test_focus_change_after_backspaces_stops_the_typing(pair, detector, tmp_path
     assert d.last is None                              # nothing to undo later
 
 
+def test_wtype_fallback_stops_mid_text_when_focus_leaves(pair, detector, tmp_path):
+    """wtype is one call per key, so a focus change cannot leak the rest."""
+    win = {"now": "0xaaa"}
+    d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"])
+    d.set_window("0xaaa")
+    orig = fx.type_text
+    typed = []
+
+    def hooked(t):
+        typed.append(t)
+        orig(t)
+        if len(typed) == 2:
+            win["now"] = "0xbbb"          # focus leaves after the second letter
+
+    fx.type_text = hooked
+    chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
+    assert d.auto_correct(chunk, spaces, 0.0, d.focus_serial) is False
+    assert typed == ["п", "р"]            # the other letters were never sent
+    assert ("switch", "ru") not in fx.calls and d.last is None
+
+
+def test_selection_flip_checks_focus_between_words(pair, detector, tmp_path):
+    win = {"now": "0xaaa"}
+    d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"])
+    d.set_window("0xaaa")
+    fx.selected = "ghbdtn ghbdtn ghbdtn"
+    d.arm_selection()
+    typed = []
+
+    def hooked(t):
+        typed.append(t)
+        win["now"] = "0xbbb"
+
+    fx.type_text = hooked
+    d.correct()
+    assert len(typed) == 1                # stopped after the first piece
+
+
 def test_focus_change_after_typing_stops_the_layout_switch(pair, detector, tmp_path):
     d, buf, fx = _drifting(pair, detector, tmp_path, "type_text")
     chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
@@ -342,6 +380,39 @@ def test_interrupted_update_is_recovered_not_deleted(tmp_path, live):
     assert "restoring the previous install" in proc.stdout
     assert (share / "relayout" / "state.json").read_text() == '{"words": {"private": "ru"}}'
     assert not old.exists()
+
+
+@pytest.mark.skipif(shutil.which("rsync") is None, reason="install.sh needs rsync")
+def test_recovery_checks_the_launchers_not_just_imports(tmp_path):
+    """Imports work but the command launcher is broken (it still points at the
+    staging directory): the backup is restored."""
+    home = tmp_path / "home"
+    share = home / ".local" / "share"
+    for name in ("relayout.old", "relayout"):
+        (share / name / ".venv" / "bin").mkdir(parents=True)
+        (share / name / "pyproject.toml").write_text('[project]\nname = "relayout"\n')
+        py = share / name / ".venv" / "bin" / "python"
+        py.write_text("#!/bin/sh\nexit 0\n")           # imports fine
+        py.chmod(0o755)
+    (share / "relayout.old" / "state.json").write_text("old")
+    live_bin = share / "relayout" / ".venv" / "bin"
+    (live_bin / "relayout").write_text("#!/bin/sh\nexec /nonexistent.staging/python\n")
+    (live_bin / "relayout").chmod(0o755)
+    (live_bin / "relayoutd").write_text("#!/bin/sh\n")
+    (live_bin / "relayoutd").chmod(0o755)
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    real = shutil.which("python3")
+    (shim / "python3").write_text(
+        f'#!/bin/sh\nif [ "$1" = "-m" ] && [ "$2" = "venv" ]; then exit 1; fi\nexec {real} "$@"\n'
+    )
+    (shim / "python3").chmod(0o755)
+    env = {**os.environ, "RELAYOUT_HOME": str(home), "PATH": f"{shim}:{os.environ['PATH']}"}
+    proc = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "install.sh")], env=env, capture_output=True, text=True
+    )
+    assert "restoring the previous install" in proc.stdout
+    assert (share / "relayout" / "state.json").read_text() == "old"
 
 
 # --- installer: ownership checks without following links ----------------------

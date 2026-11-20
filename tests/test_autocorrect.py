@@ -40,11 +40,19 @@ class Fx:
         self.calls = []
         self.selected = selected
 
+    # The wtype fallback sends one key per call (so focus can be checked
+    # between them); merge neighbours so tests describe what was typed.
     def send_backspaces(self, n):
-        self.calls.append(("bs", n))
+        if self.calls and self.calls[-1][0] == "bs":
+            self.calls[-1] = ("bs", self.calls[-1][1] + n)
+        else:
+            self.calls.append(("bs", n))
 
     def type_text(self, t):
-        self.calls.append(("type", t))
+        if self.calls and self.calls[-1][0] == "type":
+            self.calls[-1] = ("type", self.calls[-1][1] + t)
+        else:
+            self.calls.append(("type", t))
 
     def read_primary_selection(self):
         return self.selected
