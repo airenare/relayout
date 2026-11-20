@@ -47,6 +47,11 @@ def main() -> None:
     if method == "uinput" and replayer is None:
         logger.warning("output.method = uinput but /dev/uinput is not writable; using wtype")
     logger.info("retyping with %s", "uinput key replay" if replayer else "wtype")
+    if replayer is None:
+        logger.warning(
+            "automatic correction is off without /dev/uinput (wtype cannot be kept "
+            "bound to the focused window); the double-Shift hotkey still works"
+        )
     lookup = HyprLayout(pair)
     store = Store(default_excluded=auto["exclude_apps"], default_auto=bool(auto["enabled"]))
     daemon = Daemon(
@@ -61,6 +66,7 @@ def main() -> None:
         replayer=replayer,
         locked=CachedLock(),
         window_probe=active_window_address,
+        auto_requires_replayer=True,
     )
     asyncio.run(app.run(daemon, lookup, hotkey))
 

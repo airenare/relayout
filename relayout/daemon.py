@@ -72,6 +72,7 @@ class Daemon:
         locked: Callable[[], bool] = lambda: False,
         sleep: Callable[[float], None] = time.sleep,
         window_probe: Callable[[], str] | None = None,
+        auto_requires_replayer: bool = False,
     ):
         self.layout_pair = layout_pair
         self.buffer = buffer
@@ -89,6 +90,10 @@ class Daemon:
         self._sleep = sleep
         # Live "which window has focus" query (hyprctl); None skips the check.
         self.window_probe = window_probe
+        # wtype starts a process per key, so keys can land after a focus
+        # change; automatic corrections (which nobody is watching) are only
+        # run when keys can be replayed in-process. The hotkey still works.
+        self.auto_requires_replayer = auto_requires_replayer
         self.window = ""  # focused window address, from compositor events
         # Bumped whenever focus may have moved; a correction captured before
         # a bump must not be typed afterwards (it would land in another window).
@@ -177,6 +182,9 @@ class Daemon:
             "active": active,
             "rules": dict(self.store.words),
             "keep": list(self.store.keep),
+            "auto_blocked": (
+                "no-uinput" if self.auto_requires_replayer and self.replayer is None else None
+            ),
         }
 
     # --- corrections -------------------------------------------------
@@ -222,6 +230,8 @@ class Daemon:
         ``focus`` is ``focus_serial`` when the word was captured. Returns True
         if it retyped."""
         if not chunk or spaces > 1 or not self.store.auto or self.suppressed():
+            return False
+        if self.auto_requires_replayer and self.replayer is None:
             return False
         if focus is not None and focus != self.focus_serial:
             return False

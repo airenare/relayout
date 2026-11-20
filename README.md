@@ -53,7 +53,11 @@ written to disk.
   a word is never typed into the wrong window.
 - **Works in every app.** A correction replays the same physical keys on a
   virtual keyboard after switching the layout (tested in a terminal and
-  Chromium); if `/dev/uinput` isn't writable it falls back to `wtype`.
+  Chromium). If `/dev/uinput` isn't writable, automatic correction is switched
+  off (the double-Shift hotkey still works, retyping with `wtype`): `wtype`
+  starts a process per key, so a few keys can land in another window if focus
+  changes mid-correction, which is not acceptable for something nobody is
+  watching.
 - **Bar widget** for Omarchy: on/off state, per-app exclusion, and adding,
   moving or removing learned words (see [Bar widget](#bar-widget)).
 
@@ -100,7 +104,7 @@ relayout has to see what you type, so:
   into a private virtualenv)
 - `wl-clipboard` and `wtype` (installed on Omarchy by default); `notify-send`
   is optional, for the "learned a word" notification
-- Write access to `/dev/uinput` for key replay (otherwise `wtype` is used)
+- Write access to `/dev/uinput` for key replay (without it only the hotkey works, via `wtype`)
 - Membership in the `input` group (the install script sets this up)
 
 ## Install
@@ -139,7 +143,7 @@ The installer is deliberately conservative:
 - It checks for `python3`, `venv`, `rsync` and `systemctl` up front.
 
 If `/dev/uinput` isn't writable the script says so and relayout retypes with
-`wtype` instead.
+`wtype` instead, with automatic correction switched off (the hotkey still works).
 
 ## Bar widget
 

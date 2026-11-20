@@ -198,7 +198,7 @@ if [ -n "$SCRATCH" ]; then
 fi
 
 if [ ! -w /dev/uinput ]; then
-    echo "note: /dev/uinput is not writable by you; relayout will retype with wtype instead."
+    echo "note: /dev/uinput is not writable by you; automatic correction will be off and the hotkey will retype with wtype."
     echo "      For key replay: add a udev rule 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' and run 'sudo modprobe uinput'."
 fi
 

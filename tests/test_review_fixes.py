@@ -249,6 +249,29 @@ def test_daemon_asks_the_guard_for_every_key(pair, detector, tmp_path):
     assert d.last is None
 
 
+def test_auto_correction_is_off_without_uinput_but_the_hotkey_works(pair, detector, tmp_path):
+    d, buf, fx = make(pair, detector, tmp_path, auto_requires_replayer=True)  # no replayer
+    chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
+    assert d.auto_correct(chunk, spaces) is False and fx.calls == []
+    assert json.loads(d.handle_command("status"))["auto_blocked"] == "no-uinput"
+    assert d.correct() is True and ("switch", "ru") in fx.calls     # manual still works
+
+
+def test_auto_correction_runs_when_keys_can_be_replayed(pair, detector, tmp_path):
+    class R:
+        def backspaces(self, n, guard=None): return True
+        def replay(self, entries, spaces=0, guard=None): return True
+
+    d, buf, fx = make(pair, detector, tmp_path, auto_requires_replayer=True, replayer=R())
+    chunk, spaces = word_and_space(buf, pair, "us", "ghbdtn")
+    assert d.auto_correct(chunk, spaces) is True
+    assert json.loads(d.handle_command("status"))["auto_blocked"] is None
+
+
+def test_daemon_is_started_with_auto_requiring_the_replayer():
+    assert "auto_requires_replayer=True" in (ROOT / "relayout" / "cli.py").read_text()
+
+
 def test_toggle_also_stops_when_focus_moves(pair, detector, tmp_path):
     win = {"now": "0xaaa"}
     d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"])
