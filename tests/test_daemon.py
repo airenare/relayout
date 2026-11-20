@@ -15,7 +15,7 @@ def test_correct_prefers_selection_when_present():
          patch("relayout.daemon.inject.send_backspaces") as mock_backspace:
         daemon.correct()
 
-    mock_type.assert_called_once_with("привет")
+    assert "".join(c.args[0] for c in mock_type.call_args_list) == "привет"
     mock_backspace.assert_not_called()
 
 

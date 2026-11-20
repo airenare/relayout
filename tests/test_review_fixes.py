@@ -156,21 +156,22 @@ def test_wtype_fallback_stops_mid_text_when_focus_leaves(pair, detector, tmp_pat
     assert ("switch", "ru") not in fx.calls and d.last is None
 
 
-def test_selection_flip_checks_focus_between_words(pair, detector, tmp_path):
+def test_selection_flip_checks_focus_before_every_character(pair, detector, tmp_path):
     win = {"now": "0xaaa"}
     d, buf, fx = make(pair, detector, tmp_path, window_probe=lambda: win["now"])
     d.set_window("0xaaa")
-    fx.selected = "ghbdtn ghbdtn ghbdtn"
+    fx.selected = "ghbdtn ghbdtn"
     d.arm_selection()
     typed = []
 
     def hooked(t):
         typed.append(t)
-        win["now"] = "0xbbb"
+        if len(typed) == 2:
+            win["now"] = "0xbbb"          # focus leaves in the middle of a word
 
     fx.type_text = hooked
     d.correct()
-    assert len(typed) == 1                # stopped after the first piece
+    assert typed == ["п", "р"]            # the rest of the word never went out
 
 
 def test_focus_change_after_typing_stops_the_layout_switch(pair, detector, tmp_path):

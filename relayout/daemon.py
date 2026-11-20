@@ -277,12 +277,13 @@ class Daemon:
         return True
 
     def _type_guarded(self, text: str) -> None:
-        """Type a longer text (a selection) a word at a time, checking focus
-        before each piece."""
-        for piece in re.findall(r"\S+|\s+", text):
+        """Type a longer text (a selection) one character per wtype call,
+        checking focus before each. wtype starts a process per key, so a few
+        keys can still land after a focus change (more under load)."""
+        for ch in text:
             if not self.focus_ok(self._token):
                 return
-            self.typist.type_text(piece)
+            self.typist.type_text(ch)
 
     def _retype(self, chunk, cur, cur_text, other_text, spaces, auto) -> bool:
         other = self.layout_pair.other(cur)
